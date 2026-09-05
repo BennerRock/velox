@@ -66,8 +66,9 @@ public class Optima implements ModInitializer {
         LOGGER.info("[Optima] render.item_distance               ={}", c.renderItemDistance);
         LOGGER.info("[Optima] render.particle_budget             ={}", c.renderParticleBudget);
         LOGGER.info("[Optima] memory.watchdog                    ={}", c.memoryWatchdog);
-        LOGGER.info("[Optima] stability.fps_governor             ={} (target {} fps, adaptive particles: {})",
-                c.stabilityFpsGovernor, c.stabilityTargetFps, c.stabilityAdaptiveParticles);
+        LOGGER.info("[Optima] stability.fps_governor             ={} (target {} fps, adaptive particles: {}, adaptive culling: {})",
+                c.stabilityFpsGovernor, c.stabilityTargetFps, c.stabilityAdaptiveParticles, c.stabilityAdaptiveCulling);
+        LOGGER.info("[Optima] stability.min_cull_distance        ={} (blocks, lower bound under load)", c.stabilityMinCullDistance);
         LOGGER.info("[Optima] collect_stats                      ={} (keep off while playing)", c.collectStats);
         LOGGER.info("[Optima] client boost                       =graphics:{} clouds:{} shadows:{} particles:{}",
                 c.boostGraphicsMode, c.boostDisableClouds,

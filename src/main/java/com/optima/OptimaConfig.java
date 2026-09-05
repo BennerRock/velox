@@ -148,6 +148,16 @@ public final class OptimaConfig {
     /** A frame longer than this (milliseconds) counts as a stutter. */
     public int stabilityStutterMs = 100;
 
+    /**
+     * Shrink entity / block-entity / item cull distances while FPS is low, and relax them back
+     * once the frame rate recovers. Lives entirely in the render fast-path and never touches
+     * game logic, so it cannot change behaviour.
+     */
+    public boolean stabilityAdaptiveCulling = true;
+
+    /** Lower bound (blocks) the cull distance may be shrunk to while under load. */
+    public double stabilityMinCullDistance = 48.0D;
+
     // ---------------- memory ----------------
 
     /** Sample heap usage on a daemon thread and log a periodic report. */
@@ -261,6 +271,10 @@ public final class OptimaConfig {
                 read(props, "stability.log_stutters", this.stabilityLogStutters);
         this.stabilityStutterMs =
                 read(props, "stability.stutter_ms", this.stabilityStutterMs);
+        this.stabilityAdaptiveCulling =
+                read(props, "stability.adaptive_culling", this.stabilityAdaptiveCulling);
+        this.stabilityMinCullDistance =
+                read(props, "stability.min_cull_distance", this.stabilityMinCullDistance);
         this.memoryWatchdog =
                 read(props, "memory.watchdog", this.memoryWatchdog);
         this.memoryWatchdogIntervalSeconds =
@@ -406,6 +420,10 @@ public final class OptimaConfig {
                 "Log a warning when a frame exceeds the stutter threshold.");
         comment(sb, "stability.stutter_ms", stabilityStutterMs,
                 "A frame longer than this (ms) counts as a stutter.");
+        comment(sb, "stability.adaptive_culling", stabilityAdaptiveCulling,
+                "Shrink entity/block-entity cull distances when FPS is low, restore when it recovers.");
+        comment(sb, "stability.min_cull_distance", stabilityMinCullDistance,
+                "Cull distance (blocks) the stabilizer will not go below under load.");
         sb.append('\n');
 
         sb.append("# --- MEMORY ---\n");

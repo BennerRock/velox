@@ -60,6 +60,18 @@ public final class OptimaFast {
     public static boolean logStutters;
     public static int stutterMs;
 
+    // ---- adaptive culling (original, runtime-tuned) ----
+    /** Master switch for runtime-tuned distance culling. */
+    public static boolean adaptiveCulling;
+    /** Lower bound (squared blocks) cull distances may be shrunk to under load. */
+    public static double minCullDistSq;
+    /** Configured (full) entity cull distance squared - the value we relax back to. */
+    public static double entityCullBaseSq;
+    /** Configured block-entity cull distance squared. */
+    public static double beCullBaseSq;
+    /** Configured item cull distance squared. */
+    public static double itemCullBaseSq;
+
     /** New particles accepted since the last frame heartbeat. Reset by {@link #onFrame()}. */
     private static int particlesThisFrame;
 
@@ -90,12 +102,15 @@ public final class OptimaFast {
 
         beCullEnabled = c.renderBlockEntityDistance > 0.0D;
         beCullDistSq = sq(c.renderBlockEntityDistance);
+        beCullBaseSq = beCullDistSq;
 
         entityCullEnabled = c.renderEntityDistance > 0.0D;
         entityCullDistSq = sq(c.renderEntityDistance);
+        entityCullBaseSq = entityCullDistSq;
 
         itemCullEnabled = c.renderItemDistance > 0.0D;
         itemCullDistSq = sq(c.renderItemDistance);
+        itemCullBaseSq = itemCullDistSq;
 
         particleLimiterEnabled = c.renderParticleBudget > 0;
         particleBudget = c.renderParticleBudget;
@@ -106,6 +121,9 @@ public final class OptimaFast {
         adaptiveParticles = c.stabilityAdaptiveParticles;
         logStutters = c.stabilityLogStutters;
         stutterMs = Math.max(8, c.stabilityStutterMs);
+
+        adaptiveCulling = c.stabilityAdaptiveCulling;
+        minCullDistSq = sq(Math.max(8.0D, c.stabilityMinCullDistance));
 
         collectStats = c.collectStats;
     }
@@ -160,6 +178,51 @@ public final class OptimaFast {
         }
         particlesThisFrame++;
         return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Adaptive culling (original)
+    //
+    // The stabilizer passes its smoothed FPS in here when it sits below target. We then
+    // tighten the live *CullDistSq fields - the render mixins read those exact fields every
+    // frame, so more entities/block-entities/items fall outside the (shorter) radius and are
+    // skipped. That is the same "shed load when slow" idea Sodium uses, but driven by our own
+    // governor and with no reload. Distances relax back to their configured base once FPS
+    // recovers, so a healthy scene is never permanently starved.
+    // ------------------------------------------------------------------
+
+    /**
+     * @param avgFps  smoothed frames-per-second reported by the stabilizer
+     * @param target  desired FPS from {@code stability.target_fps}
+     */
+    public static void adaptCulling(double avgFps, double target) {
+        if (!adaptiveCulling || avgFps <= 0.0D || target <= 0.0D) {
+            return;
+        }
+        double lo = minCullDistSq;
+
+        if (entityCullEnabled) {
+            entityCullDistSq = avgFps < target * 0.9D
+                    ? Math.max(lo, entityCullDistSq * 0.85D)
+                    : Math.min(entityCullBaseSq, entityCullDistSq + (entityCullBaseSq - lo) * 0.05D + 1.0D);
+        }
+        if (beCullEnabled) {
+            beCullDistSq = avgFps < target * 0.9D
+                    ? Math.max(lo, beCullDistSq * 0.85D)
+                    : Math.min(beCullBaseSq, beCullDistSq + (beCullBaseSq - lo) * 0.05D + 1.0D);
+        }
+        if (itemCullEnabled) {
+            itemCullDistSq = avgFps < target * 0.9D
+                    ? Math.max(lo, itemCullDistSq * 0.85D)
+                    : Math.min(itemCullBaseSq, itemCullDistSq + (itemCullBaseSq - lo) * 0.05D + 1.0D);
+        }
+    }
+
+    /** Human-readable snapshot of the live cull distances, for diagnostics. */
+    public static String cullingSnapshot() {
+        return (entityCullEnabled ? Math.round(Math.sqrt(entityCullDistSq)) : 0) + "/"
+                + (beCullEnabled ? Math.round(Math.sqrt(beCullDistSq)) : 0) + "/"
+                + (itemCullEnabled ? Math.round(Math.sqrt(itemCullDistSq)) : 0);
     }
 
     // ------------------------------------------------------------------

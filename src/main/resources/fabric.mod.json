@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "optima",
+  "id": "velox",
   "version": "${version}",
-  "name": "Optima",
-  "description": "All-in-one optimization for Minecraft 1.21.11: client rendering, Lithium-equivalent game-logic optimizations (entity AI, goal selection), memory stewardship and a frame-rate stabilizer. Install Optima and you do not need Lithium.",
+  "name": "Velox",
+  "description": "All-in-one optimization for Minecraft 1.21.11. Replaces Lithium (game-logic), Sodium (rendering) and Sodium Extra (extra options) with one mod, plus an original frame-rate stabilizer and adaptive culling. Install Velox and you do not need Lithium, Sodium or Sodium Extra.",
   "authors": [
     "YourName"
   ],

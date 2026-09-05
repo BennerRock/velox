@@ -41,6 +41,7 @@ public final class OptimaStabilizer {
     private static boolean adaptiveParticles;
     private static boolean logStutters;
     private static double stutterMs;
+    private static boolean adaptiveCulling;
 
     private OptimaStabilizer() {
     }
@@ -52,6 +53,7 @@ public final class OptimaStabilizer {
         adaptiveParticles = OptimaFast.adaptiveParticles;
         logStutters = OptimaFast.logStutters;
         stutterMs = OptimaFast.stutterMs;
+        adaptiveCulling = OptimaFast.adaptiveCulling;
         Optima.LOGGER.info("[Optima] FPS stabilizer: {}",
                 enabled ? "enabled (target " + targetFps + " fps)" : "disabled");
     }
@@ -92,6 +94,9 @@ public final class OptimaStabilizer {
 
                 if (adaptiveParticles && OptimaFast.particleLimiterEnabled) {
                     adaptParticles();
+                }
+                if (adaptiveCulling) {
+                    OptimaFast.adaptCulling(emaFps, targetFps);
                 }
             }
         }
@@ -154,10 +159,12 @@ public final class OptimaStabilizer {
         double avgMs = avgFrameMs();
         double avgFps = avgMs > 0 ? 1000.0D / avgMs : 0.0D;
         Object cap = OptimaFast.particleLimiterEnabled ? OptimaFast.effectiveParticleBudget : "off";
+        Object cull = (OptimaFast.entityCullEnabled || OptimaFast.beCullEnabled || OptimaFast.itemCullEnabled)
+                ? OptimaFast.cullingSnapshot() : "off";
         Optima.LOGGER.info("[Optima] FPS stabilizer: avg {}/{} fps, worst-frame {} ms, "
-                + "stutters>{}ms: {}, particle cap: {}",
+                + "stutters>{}ms: {}, particle cap: {}, cull(e/be/item): {}",
                 Math.round(avgFps), targetFps, Math.round(worstFrameMs * 10.0D) / 10.0D,
-                (int) stutterMs, stutterCount, cap);
+                (int) stutterMs, stutterCount, cap, cull);
         worstFrameMs = 0.0D;
     }
 }
