@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "optima",
+  "version": "${version}",
+  "name": "Optima",
+  "description": "All-in-one optimization for Minecraft 1.21.11: client rendering, Lithium-equivalent game-logic optimizations (entity AI, goal selection), memory stewardship and a frame-rate stabilizer. Install Optima and you do not need Lithium.",
+  "authors": [
+    "YourName"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.optima.Optima"
+    ],
+    "client": [
+      "com.optima.OptimaClient"
+    ]
+  },
+  "mixins": [
+    "optima.mixins.json",
+    {
+      "config": "optima.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.0",
+    "minecraft": "1.21.11",
+    "java": ">=21"
+  }
+}

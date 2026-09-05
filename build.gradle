@@ -1,0 +1,88 @@
+// Optima - build script
+//
+// Two plugin IDs are possible for an obfuscated Minecraft version like 1.21.11:
+//   'net.fabricmc.fabric-loom-remap'  <- modern ID, Loom 1.14+
+//   'fabric-loom'                     <- legacy ID, kept for backwards compatibility
+// The legacy ID is used here because it resolves on every Loom version.
+// If you bump loom_version to 1.17-SNAPSHOT or newer, you may switch to the
+// modern ID without any other change.
+plugins {
+    id 'fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'Fabric'
+        url = 'https://maven.fabricmc.net/'
+    }
+    maven {
+        name = 'Mojang'
+        url = 'https://libraries.minecraft.net/'
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+
+    // Mappings: Mojang official by default (recommended for 1.21.11).
+    // Yarn stops being updated after 1.21.11, so Mojang mappings are the
+    // future-proof choice. Flip gradle.properties:use_mojmap to switch.
+    if (project.findProperty('use_mojmap')?.toString()?.toBoolean() ?: true) {
+        mappings loom.officialMojangMappings()
+    } else {
+        mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    }
+
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    inputs.property 'loader_version', project.loader_version
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version,
+                'minecraft_version': project.minecraft_version,
+                'loader_version': project.loader_version
+    }
+}
+
+java {
+    toolchain {
+        // JavaLanguageVersion.of also accepts a String, which avoids Groovy's
+        // String->primitive int coercion being picky across Gradle versions.
+        languageVersion = JavaLanguageVersion.of(project.java_version.toString())
+    }
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = project.java_version.toString().toInteger()
+    it.options.encoding = 'UTF-8'
+}
+
+jar {
+    from('LICENSE') {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+}
+
+publishing {
+    publications {
+        create('mavenJava', MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+    repositories {}
+}

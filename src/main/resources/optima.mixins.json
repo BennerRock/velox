@@ -1,0 +1,18 @@
+{
+  "required": false,
+  "package": "com.optima.mixin.tick",
+  "plugin": "com.optima.mixin.OptimaMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "GoalSelectorMixin",
+    "GoalSelectorTickRunningMixin",
+    "MobAiThrottleMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  },
+  "overwrites": {
+    "conformVisibility": true
+  }
+}

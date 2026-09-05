@@ -1,0 +1,21 @@
+{
+  "required": false,
+  "package": "com.optima.mixin.client",
+  "plugin": "com.optima.mixin.OptimaMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "MinecraftInitMixin",
+    "BlockEntityRenderDispatcherMixin",
+    "EntityRenderDistanceMixin",
+    "ParticleEngineTickMixin",
+    "ParticleEngineAddMixin",
+    "GameLoopMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  },
+  "overwrites": {
+    "conformVisibility": true
+  }
+}
