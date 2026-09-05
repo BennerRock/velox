@@ -33,6 +33,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * <p>With the cull off, this mixin is not applied at all: {@code VeloxMixinPlugin} drops it at
  * class-load time, so the default configuration pays nothing here - no injected code, no
  * {@code CallbackInfo}, no enlarged target method.</p>
+ *
+ * <h3>What 1.0-release changed</h3>
+ * <p>Same per-axis early-out as the entity cull: once one axis is beyond the squared budget
+ * the sum has to be beyond it as well, so the other two axes are never computed. Most block
+ * entities in a loaded base are past the cutoff, so in practice this removes two thirds of
+ * the arithmetic for the common case. The decision is unchanged - only the work spent
+ * reaching it.</p>
  */
 @Mixin(BlockEntityRenderDispatcher.class)
 public abstract class BlockEntityRenderDispatcherMixin {
@@ -62,11 +69,23 @@ public abstract class BlockEntityRenderDispatcherMixin {
 
         // BlockPos coordinates are ints; adding 0.5 centres the comparison on the block.
         net.minecraft.core.BlockPos pos = blockEntity.getBlockPos();
-        double dx = VeloxFast.camX() - (pos.getX() + 0.5D);
-        double dy = VeloxFast.camY() - (pos.getY() + 0.5D);
-        double dz = VeloxFast.camZ() - (pos.getZ() + 0.5D);
+        double limitSq = VeloxFast.beCullDistSq;
 
-        if (dx * dx + dy * dy + dz * dz > VeloxFast.beCullDistSq) {
+        double dx = VeloxFast.camX() - (pos.getX() + 0.5D);
+        double distSq = dx * dx;
+        boolean culled = distSq > limitSq;
+        if (!culled) {
+            double dy = VeloxFast.camY() - (pos.getY() + 0.5D);
+            distSq += dy * dy;
+            culled = distSq > limitSq;
+            if (!culled) {
+                double dz = VeloxFast.camZ() - (pos.getZ() + 0.5D);
+                distSq += dz * dz;
+                culled = distSq > limitSq;
+            }
+        }
+
+        if (culled) {
             VeloxRuntime.onBlockEntityCulled();
             ci.cancel();
         }

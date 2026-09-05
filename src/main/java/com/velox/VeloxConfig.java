@@ -97,6 +97,14 @@ public final class VeloxConfig {
     public double renderItemDistance = 32.0D;
 
     /**
+     * Separate radius for experience orbs only. Mob farms and the ender dragon leave
+     * hundreds of them on the ground, and while each one is small they add up to a real
+     * slice of the entity pass. Orbs are still collected normally - only their drawing is
+     * skipped. {@code 0} uses {@link #renderEntityDistance} instead.
+     */
+    public double renderExperienceOrbDistance = 0.0D;
+
+    /**
      * Maximum number of NEW particles the engine may accept per 20 ms window
      * (roughly one frame at 50 FPS). Particles already alive are untouched, so
      * existing effects do not visibly pop - this only stops a storm from growing.
@@ -157,6 +165,14 @@ public final class VeloxConfig {
 
     /** Lower bound (blocks) the cull distance may be shrunk to while under load. */
     public double stabilityMinCullDistance = 48.0D;
+
+    /**
+     * Frames between two adaptive-culling adjustments. Re-evaluating every frame made the
+     * radius oscillate around the point where the frame time crossed the target, and an
+     * oscillating radius is visible as objects popping in and out at the edge of the cull.
+     * Larger values are smoother and cheaper; {@code 1} restores the previous behaviour.
+     */
+    public int stabilityAdaptInterval = 6;
 
     // ---------------- memory ----------------
 
@@ -247,6 +263,8 @@ public final class VeloxConfig {
                 read(props, "render.entity_distance", this.renderEntityDistance);
         this.renderItemDistance =
                 read(props, "render.item_distance", this.renderItemDistance);
+        this.renderExperienceOrbDistance =
+                read(props, "render.experience_orb_distance", this.renderExperienceOrbDistance);
         this.renderParticleBudget =
                 read(props, "render.particle_budget", this.renderParticleBudget);
         this.collectStats =
@@ -275,6 +293,8 @@ public final class VeloxConfig {
                 read(props, "stability.adaptive_culling", this.stabilityAdaptiveCulling);
         this.stabilityMinCullDistance =
                 read(props, "stability.min_cull_distance", this.stabilityMinCullDistance);
+        this.stabilityAdaptInterval =
+                read(props, "stability.adapt_interval", this.stabilityAdaptInterval);
         this.memoryWatchdog =
                 read(props, "memory.watchdog", this.memoryWatchdog);
         this.memoryWatchdogIntervalSeconds =
@@ -294,6 +314,7 @@ public final class VeloxConfig {
         switch (name) {
             case "balanced":
                 renderItemDistance = 32.0D;
+                renderExperienceOrbDistance = 0.0D;
                 renderBlockEntityDistance = 0.0D;
                 renderEntityDistance = 0.0D;
                 renderParticleBudget = 400;
@@ -305,6 +326,7 @@ public final class VeloxConfig {
                 break;
             case "aggressive":
                 renderItemDistance = 32.0D;
+                renderExperienceOrbDistance = 32.0D;
                 renderBlockEntityDistance = 64.0D;
                 renderEntityDistance = 96.0D;
                 renderParticleBudget = 300;
@@ -317,6 +339,7 @@ public final class VeloxConfig {
             case "safe":
             default:
                 renderItemDistance = 32.0D;
+                renderExperienceOrbDistance = 0.0D;
                 renderBlockEntityDistance = 0.0D;
                 renderEntityDistance = 0.0D;
                 renderParticleBudget = 0;
@@ -383,6 +406,8 @@ public final class VeloxConfig {
                 "Entity render distance in blocks. 0 = vanilla (no extra culling).");
         comment(sb, "render.item_distance", renderItemDistance,
                 "Dropped item render distance. Tighter than entity_distance is usually right.");
+        comment(sb, "render.experience_orb_distance", renderExperienceOrbDistance,
+                "Experience orb render distance. 0 = uses entity_distance.");
         comment(sb, "render.particle_budget", renderParticleBudget,
                 "Max NEW particles accepted per 20ms window. 0 = unlimited.");
 
@@ -424,6 +449,8 @@ public final class VeloxConfig {
                 "Shrink entity/block-entity cull distances when FPS is low, restore when it recovers.");
         comment(sb, "stability.min_cull_distance", stabilityMinCullDistance,
                 "Cull distance (blocks) the stabilizer will not go below under load.");
+        comment(sb, "stability.adapt_interval", stabilityAdaptInterval,
+                "Frames between adaptive-culling adjustments (higher = smoother).");
         sb.append('\n');
 
         sb.append("# --- MEMORY ---\n");

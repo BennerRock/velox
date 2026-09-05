@@ -44,6 +44,10 @@ public final class VeloxFast {
     public static boolean itemCullEnabled;
     public static double itemCullDistSq;
 
+    /** Experience orbs get their own radius: mob farms and the dragon leave hundreds behind. */
+    public static boolean xpCullEnabled;
+    public static double xpCullDistSq;
+
     public static boolean particleLimiterEnabled;
     public static int particleBudget;
     /**
@@ -71,6 +75,12 @@ public final class VeloxFast {
     public static double beCullBaseSq;
     /** Configured item cull distance squared. */
     public static double itemCullBaseSq;
+    /** Configured experience-orb cull distance squared. */
+    public static double xpCullBaseSq;
+
+    /** Frames between two adaptive-culling adjustments (see {@link #adaptCulling}). */
+    public static int adaptInterval;
+    private static int adaptCountdown;
 
     /** New particles accepted since the last frame heartbeat. Reset by {@link #onFrame()}. */
     private static int particlesThisFrame;
@@ -112,6 +122,10 @@ public final class VeloxFast {
         itemCullDistSq = sq(c.renderItemDistance);
         itemCullBaseSq = itemCullDistSq;
 
+        xpCullEnabled = c.renderExperienceOrbDistance > 0.0D;
+        xpCullDistSq = sq(c.renderExperienceOrbDistance);
+        xpCullBaseSq = xpCullDistSq;
+
         particleLimiterEnabled = c.renderParticleBudget > 0;
         particleBudget = c.renderParticleBudget;
         effectiveParticleBudget = particleBudget;
@@ -124,6 +138,8 @@ public final class VeloxFast {
 
         adaptiveCulling = c.stabilityAdaptiveCulling;
         minCullDistSq = sq(Math.max(8.0D, c.stabilityMinCullDistance));
+        adaptInterval = Math.max(1, c.stabilityAdaptInterval);
+        adaptCountdown = 0;
 
         collectStats = c.collectStats;
     }
@@ -189,6 +205,16 @@ public final class VeloxFast {
     // skipped. That is the same "shed load when slow" idea Sodium uses, but driven by our own
     // governor and with no reload. Distances relax back to their configured base once FPS
     // recovers, so a healthy scene is never permanently starved.
+    //
+    // Two changes in 1.0-release, both about smoothness rather than aggression:
+    //   1. the radius is reconsidered every `adaptInterval` frames instead of every frame.
+    //      Per-frame tweaks made it oscillate around the point where the frame time crossed
+    //      the target, and an oscillating radius is visible as objects popping in and out
+    //      at the edge of the cull. Widening the interval removes the visible flicker and
+    //      costs a handful of multiplications less per frame.
+    //   2. when the frame rate is healthy and every radius has already relaxed to its
+    //      configured base, there is nothing left to compute, so the call returns at once.
+    //      That is the common case on a machine that is not struggling.
     // ------------------------------------------------------------------
 
     /**
@@ -199,30 +225,56 @@ public final class VeloxFast {
         if (!adaptiveCulling || avgFps <= 0.0D || target <= 0.0D) {
             return;
         }
+
+        if (--adaptCountdown > 0) {
+            return;
+        }
+        adaptCountdown = adaptInterval;
+
+        boolean healthy = avgFps >= target * 0.9D;
+        if (healthy
+                && (!entityCullEnabled || entityCullDistSq >= entityCullBaseSq)
+                && (!beCullEnabled || beCullDistSq >= beCullBaseSq)
+                && (!itemCullEnabled || itemCullDistSq >= itemCullBaseSq)
+                && (!xpCullEnabled || xpCullDistSq >= xpCullBaseSq)) {
+            return; // nothing to do, and nothing worth computing
+        }
+
         double lo = minCullDistSq;
 
         if (entityCullEnabled) {
-            entityCullDistSq = avgFps < target * 0.9D
-                    ? Math.max(lo, entityCullDistSq * 0.85D)
-                    : Math.min(entityCullBaseSq, entityCullDistSq + (entityCullBaseSq - lo) * 0.05D + 1.0D);
+            entityCullDistSq = step(entityCullDistSq, entityCullBaseSq, lo, healthy);
         }
         if (beCullEnabled) {
-            beCullDistSq = avgFps < target * 0.9D
-                    ? Math.max(lo, beCullDistSq * 0.85D)
-                    : Math.min(beCullBaseSq, beCullDistSq + (beCullBaseSq - lo) * 0.05D + 1.0D);
+            beCullDistSq = step(beCullDistSq, beCullBaseSq, lo, healthy);
         }
         if (itemCullEnabled) {
-            itemCullDistSq = avgFps < target * 0.9D
-                    ? Math.max(lo, itemCullDistSq * 0.85D)
-                    : Math.min(itemCullBaseSq, itemCullDistSq + (itemCullBaseSq - lo) * 0.05D + 1.0D);
+            itemCullDistSq = step(itemCullDistSq, itemCullBaseSq, lo, healthy);
         }
+        if (xpCullEnabled) {
+            xpCullDistSq = step(xpCullDistSq, xpCullBaseSq, lo, healthy);
+        }
+    }
+
+    /**
+     * One relaxation or tightening step.
+     *
+     * <p>Shrinking is multiplicative so it reacts proportionally at any radius; growing is
+     * additive (with a small floor) so a fully collapsed radius climbs back instead of
+     * crawling up from near zero.</p>
+     */
+    private static double step(double current, double base, double lo, boolean healthy) {
+        return healthy
+                ? Math.min(base, current + (base - lo) * 0.05D + 1.0D)
+                : Math.max(lo, current * 0.85D);
     }
 
     /** Human-readable snapshot of the live cull distances, for diagnostics. */
     public static String cullingSnapshot() {
         return (entityCullEnabled ? Math.round(Math.sqrt(entityCullDistSq)) : 0) + "/"
                 + (beCullEnabled ? Math.round(Math.sqrt(beCullDistSq)) : 0) + "/"
-                + (itemCullEnabled ? Math.round(Math.sqrt(itemCullDistSq)) : 0);
+                + (itemCullEnabled ? Math.round(Math.sqrt(itemCullDistSq)) : 0) + "/"
+                + (xpCullEnabled ? Math.round(Math.sqrt(xpCullDistSq)) : 0);
     }
 
     // ------------------------------------------------------------------

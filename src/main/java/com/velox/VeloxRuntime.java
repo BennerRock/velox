@@ -29,6 +29,7 @@ public final class VeloxRuntime {
     public static long beCulled;
     public static long entityCulled;
     public static long itemCulled;
+    public static long xpCulled;
     public static long particlesSuppressed;
     public static long goalSelectorSkipped;
     public static long mobAiThrottled;
@@ -37,6 +38,7 @@ public final class VeloxRuntime {
     private static boolean beCullSeen;
     private static boolean entityCullSeen;
     private static boolean itemCullSeen;
+    private static boolean xpCullSeen;
     private static boolean particleSeen;
     private static boolean goalSeen;
     private static boolean throttleSeen;
@@ -78,6 +80,17 @@ public final class VeloxRuntime {
         if (!itemCullSeen) {
             itemCullSeen = true;
             Velox.LOGGER.info("[Velox] Optimization ACTIVE: render.item_distance");
+        }
+    }
+
+    public static void onXpCulled() {
+        if (!collectStats) {
+            return;
+        }
+        xpCulled++;
+        if (!xpCullSeen) {
+            xpCullSeen = true;
+            Velox.LOGGER.info("[Velox] Optimization ACTIVE: render.experience_orb_distance");
         }
     }
 
@@ -129,6 +142,7 @@ public final class VeloxRuntime {
         return "block entities culled=" + beCulled
                 + ", entities culled=" + entityCulled
                 + ", items culled=" + itemCulled
+                + ", xp orbs culled=" + xpCulled
                 + ", particles suppressed=" + particlesSuppressed
                 + ", goal selectors skipped=" + goalSelectorSkipped
                 + ", mob AI ticks throttled=" + mobAiThrottled;

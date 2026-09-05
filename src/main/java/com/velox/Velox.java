@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory;
 public class Velox implements ModInitializer {
 
     public static final String MOD_ID = "velox";
-    public static final String VERSION = "1.0-beta6";
+    public static final String VERSION = "1.0-release";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
     @Override
@@ -64,11 +64,13 @@ public class Velox implements ModInitializer {
         LOGGER.info("[Velox] render.block_entity_distance       ={}", c.renderBlockEntityDistance);
         LOGGER.info("[Velox] render.entity_distance             ={}", c.renderEntityDistance);
         LOGGER.info("[Velox] render.item_distance               ={}", c.renderItemDistance);
+        LOGGER.info("[Velox] render.experience_orb_distance     ={}", c.renderExperienceOrbDistance);
         LOGGER.info("[Velox] render.particle_budget             ={}", c.renderParticleBudget);
         LOGGER.info("[Velox] memory.watchdog                    ={}", c.memoryWatchdog);
         LOGGER.info("[Velox] stability.fps_governor             ={} (target {} fps, adaptive particles: {}, adaptive culling: {})",
                 c.stabilityFpsGovernor, c.stabilityTargetFps, c.stabilityAdaptiveParticles, c.stabilityAdaptiveCulling);
         LOGGER.info("[Velox] stability.min_cull_distance        ={} (blocks, lower bound under load)", c.stabilityMinCullDistance);
+        LOGGER.info("[Velox] stability.adapt_interval           ={} frames (adaptive culling throttle)", c.stabilityAdaptInterval);
         LOGGER.info("[Velox] collect_stats                      ={} (keep off while playing)", c.collectStats);
         LOGGER.info("[Velox] client boost                       =graphics:{} clouds:{} shadows:{} particles:{}",
                 c.boostGraphicsMode, c.boostDisableClouds,

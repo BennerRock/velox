@@ -162,7 +162,7 @@ public final class VeloxStabilizer {
         Object cull = (VeloxFast.entityCullEnabled || VeloxFast.beCullEnabled || VeloxFast.itemCullEnabled)
                 ? VeloxFast.cullingSnapshot() : "off";
         Velox.LOGGER.info("[Velox] FPS stabilizer: avg {}/{} fps, worst-frame {} ms, "
-                + "stutters>{}ms: {}, particle cap: {}, cull(e/be/item): {}",
+                + "stutters>{}ms: {}, particle cap: {}, cull(e/be/item/xp): {}",
                 Math.round(avgFps), targetFps, Math.round(worstFrameMs * 10.0D) / 10.0D,
                 (int) stutterMs, stutterCount, cap, cull);
         worstFrameMs = 0.0D;

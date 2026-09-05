@@ -95,10 +95,12 @@ public final class VeloxMixinPlugin implements IMixinConfigPlugin {
             case "BlockEntityRenderDispatcherMixin":
                 return c.renderBlockEntityDistance > 0.0D;
             case "EntityRenderDistanceMixin":
-                // One mixin carries both the general and the item-only cull, so it has to be
-                // applied if either radius is live. The per-entity branch inside still picks
-                // the right limit and bails out when the entity's own limit is zero.
-                return c.renderEntityDistance > 0.0D || c.renderItemDistance > 0.0D;
+                // One mixin carries the general, item-only and orb-only culls, so it has to
+                // be applied if any of those radii is live. The per-entity branch inside
+                // still picks the right limit and bails out when its own limit is zero.
+                return c.renderEntityDistance > 0.0D
+                        || c.renderItemDistance > 0.0D
+                        || c.renderExperienceOrbDistance > 0.0D;
             case "ParticleEngineAddMixin":
                 // The expensive half: 'add' is called thousands of times a second during a
                 // storm, and it is the one that must allocate a CallbackInfo to be able to

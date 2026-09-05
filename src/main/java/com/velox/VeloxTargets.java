@@ -147,7 +147,8 @@ public final class VeloxTargets {
             if (!(c.renderBlockEntityDistance > 0.0D)) {
                 off.add("render.block_entity_distance");
             }
-            if (!(c.renderEntityDistance > 0.0D || c.renderItemDistance > 0.0D)) {
+            if (!(c.renderEntityDistance > 0.0D || c.renderItemDistance > 0.0D
+                    || c.renderExperienceOrbDistance > 0.0D)) {
                 off.add("render.entity_distance");
             }
             if (!(c.renderParticleBudget > 0)) {
