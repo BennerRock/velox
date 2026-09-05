@@ -5,23 +5,23 @@
   "name": "Velox",
   "description": "All-in-one optimization for Minecraft 1.21.11. Replaces Lithium (game-logic), Sodium (rendering) and Sodium Extra (extra options) with one mod, plus an original frame-rate stabilizer and adaptive culling. Install Velox and you do not need Lithium, Sodium or Sodium Extra.",
   "authors": [
-    "YourName"
+    "BennerRock"
   ],
   "contact": {},
   "license": "MIT",
   "environment": "*",
   "entrypoints": {
     "main": [
-      "com.optima.Optima"
+      "com.velox.Velox"
     ],
     "client": [
-      "com.optima.OptimaClient"
+      "com.velox.VeloxClient"
     ]
   },
   "mixins": [
-    "optima.mixins.json",
+    "velox.mixins.json",
     {
-      "config": "optima.client.mixins.json",
+      "config": "velox.client.mixins.json",
       "environment": "client"
     }
   ],

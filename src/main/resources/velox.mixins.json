@@ -1,0 +1,18 @@
+{
+  "required": false,
+  "package": "com.velox.mixin.tick",
+  "plugin": "com.velox.mixin.VeloxMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "GoalSelectorMixin",
+    "GoalSelectorTickRunningMixin",
+    "MobAiThrottleMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  },
+  "overwrites": {
+    "conformVisibility": true
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "required": false,
+  "package": "com.velox.mixin.client",
+  "plugin": "com.velox.mixin.VeloxMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "MinecraftInitMixin",
+    "BlockEntityRenderDispatcherMixin",
+    "EntityRenderDistanceMixin",
+    "ParticleEngineTickMixin",
+    "ParticleEngineAddMixin",
+    "GameLoopMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  },
+  "overwrites": {
+    "conformVisibility": true
+  }
+}

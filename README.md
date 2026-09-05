@@ -1,15 +1,15 @@
-# Velox — 一个代替多个的 Fabric 优化模组（Minecraft 1.21.11）v1.0-beta5
+# Velox — 一个代替多个的 Fabric 优化模组（Minecraft 1.21.11）v1.0-beta6
 
 **Velox = Lithium（里和纳，逻辑）+ Sodium（钠，渲染）+ Sodium Extra（钠扩展版，额外选项）合为一体，外加原创优化。**
 装上 Velox，**不要再装 Lithium / Sodium / Sodium Extra**——Velox 已经把它们的等效优化整合进同一个模组，装重复的只会互相覆盖、谁先谁后不确定，反而可能负优化。
 
 ---
 
-## 1.0-beta5 改了什么
+## 1.0-beta6 改了什么
 
-这一版在 1.0-beta4（已含 Lithium 等效逻辑优化 + 帧率稳定器）的基础上**再进一步优化**，并把"钠"和"钠扩展版"明确覆盖进来：
+这一版在 1.0-beta6（已含 Lithium 等效逻辑优化 + 帧率稳定器）的基础上**再进一步优化**，并把"钠"和"钠扩展版"明确覆盖进来：
 
-- **原创 · 动态剔除距离（全新）**：`OptimaStabilizer` + `OptimaFast.adaptCulling` 每帧把平滑后的 FPS 交给剔除器。当 FPS 低于目标时，**实时收紧**实体 / 方块实体 / 掉落物的剔除距离（更多远处对象被跳过、画得更少），FPS 恢复后自动**回弹**到配置基准。渲染 mixin 直接读这些运行时字段，无需重载——这正是 Sodium「慢了就降载」的思路，但由我们自己的稳定器驱动、零游戏逻辑改动。
+- **原创 · 动态剔除距离（全新）**：`VeloxStabilizer` + `VeloxFast.adaptCulling` 每帧把平滑后的 FPS 交给剔除器。当 FPS 低于目标时，**实时收紧**实体 / 方块实体 / 掉落物的剔除距离（更多远处对象被跳过、画得更少），FPS 恢复后自动**回弹**到配置基准。渲染 mixin 直接读这些运行时字段，无需重载——这正是 Sodium「慢了就降载」的思路，但由我们自己的稳定器驱动、零游戏逻辑改动。
 - **原创 · FPS / 剔除状态监控**：稳定器每约 10 秒报告平均 FPS、最差帧、卡顿次数、粒子上限，以及当前实时剔除距离（`e/be/item`）。对应 Sodium Extra 的「显示」概念，以日志呈现，无任何外部 API 依赖。
 - **明确覆盖 Sodium Extra**：启动期一次性图形设置（关云、关实体阴影、最小粒子、快速图形、最便宜 AO）原本就在，本版在文档与 `fabric.mod.json` 中正式声明它们覆盖 Sodium Extra 的对应选项。
 
@@ -30,10 +30,10 @@
 
 ## 三档预设
 
-改 `config/optima.properties` 第一行（注：配置文件名沿用 `optima.properties`，模组的对外身份已是 Velox）：
+改 `config/velox.properties` 第一行（注：配置文件名沿用 `velox.properties`，模组的对外身份已是 Velox）：
 
 ```properties
-profile=aggressive     # 1.0-beta5 默认，开箱即最强
+profile=aggressive     # 1.0-beta6 默认，开箱即最强
 ```
 
 | 档位 | 开启内容 | 适用 |
@@ -67,15 +67,15 @@ gradle wrapper --gradle-version 8.12    # 若压缩包里没有 gradlew
 .\gradlew.bat build
 ```
 
-产物：`Project/build/libs/velox-1.0-beta5.jar`（需 JDK 21 + 首次联网约 1–2 GB，依赖会被 Gradle 全局缓存复用）
+产物：`Project/build/libs/velox-1.0-beta6.jar`（需 JDK 21 + 首次联网约 1–2 GB，依赖会被 Gradle 全局缓存复用）
 
-放进 `mods/`，**然后删掉 `config/optima.properties`** 让它重新生成。
+放进 `mods/`，**然后删掉 `config/velox.properties`** 让它重新生成。
 
 ---
 
 ## 原创优化说明
 
-### 帧率稳定器（`OptimaStabilizer` + `GameLoopMixin`）
+### 帧率稳定器（`VeloxStabilizer` + `GameLoopMixin`）
 
 每帧测一次真实帧时间，维护滚动平均 FPS。两项原创调节都**只做测量与预算/距离调节，从不触碰游戏逻辑**，因此绝不可能改变玩法：
 
@@ -90,7 +90,7 @@ gradle wrapper --gradle-version 8.12    # 若压缩包里没有 gradlew
 
 ## 各优化项
 
-### 启动期一次性设置（`OptimaClientBoost`）— 主力，覆盖 Sodium Extra
+### 启动期一次性设置（`VeloxClientBoost`）— 主力，覆盖 Sodium Extra
 
 强制快速图形、关云、关实体阴影等。启动瞬间设置一次，热路径开销为零，GPU 收益持续整个会话。反射访问 `Options` 并尝试多个候选字段名，找不到就跳过——名字错了只丢一项，不崩。
 
@@ -125,7 +125,7 @@ gradle wrapper --gradle-version 8.12    # 若压缩包里没有 gradlew
 ### 看日志确认生效
 
 ```bash
-grep -E "Optima.*(PASS|FAIL|ACTIVE|Graphics boost|Not injected)" logs/latest.log
+grep -E "Velox.*(PASS|FAIL|ACTIVE|Graphics boost|Not injected)" logs/latest.log
 ```
 
 - `Graphics boost: N setting(s) applied`：启动期改了几项

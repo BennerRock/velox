@@ -1,4 +1,4 @@
-// Optima - build script
+// Velox - build script
 //
 // Two plugin IDs are possible for an obfuscated Minecraft version like 1.21.11:
 //   'net.fabricmc.fabric-loom-remap'  <- modern ID, Loom 1.14+
