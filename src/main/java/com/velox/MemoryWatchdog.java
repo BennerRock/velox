@@ -32,11 +32,11 @@ public final class MemoryWatchdog {
     }
 
     public static synchronized void start() {
-        if (!VeloxConfig.INSTANCE.memoryWatchdog || thread != null) {
+        if (!VeloxConfig.INSTANCE.current().memoryWatchdog || thread != null) {
             return;
         }
 
-        int interval = Math.max(30, VeloxConfig.INSTANCE.memoryWatchdogIntervalSeconds);
+        int interval = Math.max(30, VeloxConfig.INSTANCE.current().memoryWatchdogIntervalSeconds);
 
         thread = new Thread(() -> {
             MemoryMXBean bean = ManagementFactory.getMemoryMXBean();
@@ -70,7 +70,7 @@ public final class MemoryWatchdog {
                 }
                 sb.append(", lowest observed ").append(lowWaterAfterGc / MB).append(" MB");
 
-                if (VeloxConfig.INSTANCE.collectStats) {
+                if (VeloxRuntime.collectStats) {
                     sb.append(" | ").append(VeloxRuntime.report());
                 }
 

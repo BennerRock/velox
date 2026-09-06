@@ -134,24 +134,25 @@ public final class VeloxTargets {
     public static void logNotApplied(VeloxConfig c) {
         try {
             List<String> off = new ArrayList<>();
+            VeloxConfig.Profile p = c.current();
 
-            if (!c.tickGoalSelectorEmptyFastPath) {
+            if (!p.tickGoalSelectorEmptyFastPath) {
                 off.add("tick.goal_selector_empty_fast_path");
             }
-            if (!c.tickGoalSelectorSkipWhenIdle) {
+            if (!p.tickGoalSelectorSkipWhenIdle) {
                 off.add("tick.goal_selector_skip_when_idle");
             }
-            if (!c.tickMobAiThrottle) {
+            if (!p.tickMobAiThrottle) {
                 off.add("tick.mob_ai_throttle");
             }
-            if (!(c.renderBlockEntityDistance > 0.0D)) {
+            if (!(p.renderBlockEntityDistance > 0.0D)) {
                 off.add("render.block_entity_distance");
             }
-            if (!(c.renderEntityDistance > 0.0D || c.renderItemDistance > 0.0D
-                    || c.renderExperienceOrbDistance > 0.0D)) {
+            if (!(p.renderEntityDistance > 0.0D || p.renderItemDistance > 0.0D
+                    || p.renderExperienceOrbDistance > 0.0D)) {
                 off.add("render.entity_distance");
             }
-            if (!(c.renderParticleBudget > 0)) {
+            if (!(p.renderParticleBudget > 0)) {
                 off.add("render.particle_budget");
             }
             if (!anyBoost(c)) {
@@ -170,11 +171,12 @@ public final class VeloxTargets {
     }
 
     private static boolean anyBoost(VeloxConfig c) {
-        return c.boostGraphicsMode
-                || c.boostDisableClouds
-                || c.boostDisableEntityShadows
-                || c.boostMinimalParticles
-                || c.boostFastAmbientOcclusion;
+        VeloxConfig.Profile p = c.current();
+        return p.boostGraphicsMode
+                || p.boostDisableClouds
+                || p.boostDisableEntityShadows
+                || p.boostMinimalParticles
+                || p.boostFastAmbientOcclusion;
     }
 
     private static void check() {

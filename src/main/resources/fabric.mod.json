@@ -16,6 +16,9 @@
     ],
     "client": [
       "com.velox.VeloxClient"
+    ],
+    "modmenu": [
+      "com.velox.VeloxModMenu"
     ]
   },
   "mixins": [

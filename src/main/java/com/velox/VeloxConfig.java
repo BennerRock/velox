@@ -1,528 +1,407 @@
 package com.velox;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.Reader;
+import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Properties;
+import java.util.Locale;
 
 /**
- * Simple properties based configuration.
+ * JSON 配置 + 五档预设（auto / safe / eco / aggressive / vanilla）。
  *
- * <p>The file lives at {@code <game>/config/velox.properties} and is created with
- * commented defaults on first launch. Every key can also be overridden with a JVM
- * system property of the same name, which is handy for A/B benchmarking without
- * editing files.</p>
+ * 文件位于 config/velox.json，复用 Minecraft 自带的 Gson。
  *
- * <p>Config changes require a game restart to take effect, because the mixins that
- * read these flags are baked into Minecraft classes at load time.</p>
+ * 玩法安全总原则（最高优先级）：所有优化绝对不改变原版玩法。生物 AI、目标选择器
+ * 等游戏逻辑相关的 tick 优化已在 v1.1 起永久禁用（五档全关 + mixin 不注入），
+ * 见 VeloxMixinPlugin。保留的优化全部是客户端渲染路径（剔除/粒子/帧率/图形设置），
+ * 不触碰任何游戏规则。
+ *
+ * 五档：
+ * - vanilla：全部关闭，表现与未安装本模组一致；
+ * - safe：只开最稳妥的客户端优化（物品/经验球剔除 + 粒子限流 + 保守距离）；
+ * - eco：偏向省内存省电，距离更紧、预算更低；
+ * - aggressive：能开的全开、距离拉满，允许牺牲部分画面细节；
+ * - auto：动态调配，见 VeloxAutoTuner。
+ *
+ * 热重载：切档那一刻，setProfile 更新 mode，applyProfile 把该档参数整体铺到
+ * VeloxFast 的静态字段（mixin 热路径读的就是它们），启停 Auto 调参器与内存看门狗，
+ * vanilla 档时恢复启动期 boost 改过的图形项，save 立即写盘。
+ * 全程无需重启、无需重进世界。
  */
 public final class VeloxConfig {
 
     public static final VeloxConfig INSTANCE = new VeloxConfig();
 
-    // ---------------- profile ----------------
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    /** 五档模式名（小写），供指令 Tab 补全与界面循环切换共用。 */
+    public static final String[] MODES = {"auto", "safe", "eco", "aggressive", "vanilla"};
+
+    /** 中文名，反馈与界面显示用，下标与 MODES 对齐。 */
+    public static final String[] MODE_NAMES_ZH = {"自动", "安全", "节能", "激进", "原版"};
+
+    // =====================================================================
+    // 持久化字段（JSON 里出现的就这些）
+    // =====================================================================
+
+    /** 当前档位，取值见 MODES。默认 auto。 */
+    public String mode = "auto";
+
+    /** FPS 目标，用于 FPS 稳定器与 Auto 档判定。最小 30。 */
+    public int targetFps = 60;
 
     /**
-     * Starting preset, applied before the individual keys below are read, so any key you
-     * set explicitly still wins. One of {@code safe}, {@code balanced}, {@code aggressive}.
-     *
-     * <ul>
-     *   <li>{@code safe} - only the optimizations that cost nothing per frame: the one-time
-     *       startup graphics boost and the two provably-free tick skips. Start here.</li>
-     *   <li>{@code balanced} - adds the culling with the best cost/benefit ratio (dropped
-     *       items) and the particle limiter.</li>
-     *   <li>{@code aggressive} - turns on every cull plus distant-mob AI throttling. Highest
-     *       ceiling, but it changes how distant mobs behave and only pays off if your GPU,
-     *       not your CPU, is the bottleneck.</li>
-     * </ul>
+     * 【五】跟随原版设置的自定义状态：null = 跟随档位；
+     * 非 null = 玩家手动改过，Velox 只展示、不反向覆盖。
      */
-    /**
-     * Starting preset. The 1.0-beta6 default is {@code aggressive}: you asked for the very best
-     * frame rate, and aggressive turns on every cull plus distant-mob AI throttling. Switch back
-     * to {@code balanced} or {@code safe} in the config if you ever feel a gameplay change.
-     */
-    public String profile = "aggressive";
+    public VanillaFollowState vanillaFollow = new VanillaFollowState();
 
-    // ---------------- tick ----------------
+    /** 【五】原版设置自定义状态。 */
+    public static final class VanillaFollowState {
+        public Integer renderDistance;
+        public Integer simulationDistance;
+        public Double entityDistanceScaling;
+        public String particles;
+        public String clouds;
+        public Integer framerateLimit;
+        public Boolean useVsync;
+        public String graphicsMode;
+        public Boolean entityShadows;
 
-    /** Skip {@code GoalSelector#tick()} entirely when the selector has no goals at all. */
-    public boolean tickGoalSelectorEmptyFastPath = true;
+        /** 是否有任何一项处于自定义状态。 */
+        public boolean anyCustom() {
+            return renderDistance != null || simulationDistance != null
+                    || entityDistanceScaling != null || particles != null || clouds != null
+                    || framerateLimit != null || useVsync != null || graphicsMode != null
+                    || entityShadows != null;
+        }
 
-    /** Skip {@code GoalSelector#tickRunningGoals(boolean)} when no goal is currently running. */
-    public boolean tickGoalSelectorSkipWhenIdle = true;
-
-    /**
-     * Run mob AI less often for mobs that are far away from every player.
-     * Off by default because it changes how quickly distant mobs react - see
-     * {@code MobAiThrottleMixin} for the full trade-off.
-     */
-    public boolean tickMobAiThrottle = false;
-
-    /** Mobs further than this (blocks) from every player become eligible for AI throttling. */
-    public double tickMobAiThrottleDistance = 48.0D;
-
-    /** A throttled mob runs its AI step once every N ticks. */
-    public int tickMobAiThrottleInterval = 4;
-
-    // ---------------- render ----------------
-
-    /**
-     * Distance in blocks beyond which block entities stop being rendered.
-     * {@code 0} disables the cull.
-     *
-     * <p><strong>Default is 0 (off).</strong> The cull only pays off when the GPU is the
-     * bottleneck. If the CPU is the bottleneck - which is the common case at 60+ fps - the
-     * per-entity check costs more than the draw call it saves. v1 shipped this on by default
-     * and measurably lost frames. Raise it only if you have evidence your GPU is the limit.</p>
-     */
-    public double renderBlockEntityDistance = 0.0D;
-
-    /**
-     * Distance in blocks beyond which entities stop being rendered.
-     * {@code 0} disables the cull. Off by default for the same CPU-vs-GPU reason as
-     * {@link #renderBlockEntityDistance}.
-     */
-    public double renderEntityDistance = 0.0D;
-
-    /**
-     * Separate, usually tighter, radius for dropped items only. Item entities are a
-     * classic frame-rate sink because a farm or an exploded chest can leave thousands
-     * on the ground, each a fully lit and rotated model. {@code 0} uses
-     * {@link #renderEntityDistance} instead.
-     */
-    public double renderItemDistance = 32.0D;
-
-    /**
-     * Separate radius for experience orbs only. Mob farms and the ender dragon leave
-     * hundreds of them on the ground, and while each one is small they add up to a real
-     * slice of the entity pass. Orbs are still collected normally - only their drawing is
-     * skipped. {@code 0} uses {@link #renderEntityDistance} instead.
-     */
-    public double renderExperienceOrbDistance = 0.0D;
-
-    /**
-     * Maximum number of NEW particles the engine may accept per 20 ms window
-     * (roughly one frame at 50 FPS). Particles already alive are untouched, so
-     * existing effects do not visibly pop - this only stops a storm from growing.
-     * {@code 0} disables the limiter. Client side only, so purely visual.
-     */
-    public int renderParticleBudget = 0;  // 0 = limiter off
-
-    // ---------------- diagnostics ----------------
-
-    /**
-     * Enable per-optimization counters. OFF by default: the counters are cheap but they are
-     * not free, and in v1 the instrumentation measurably cost more than the optimizations
-     * saved. Turn this on only while you are checking that something is actually working,
-     * then turn it back off.
-     */
-    public boolean collectStats = false;
-
-    // ---------------- client boost (one-time, zero per-frame cost) ----------------
-
-    /** Force fast graphics (disables fancy leaves, transparent textures). Applied once at startup. */
-    public boolean boostGraphicsMode = true;
-
-    /** Force clouds off. Applied once at startup. */
-    public boolean boostDisableClouds = true;
-
-    /** Force entity shadows off. Applied once at startup. */
-    public boolean boostDisableEntityShadows = true;
-
-    /** Force minimal particles in the vanilla option, on top of the per-frame limiter. */
-    public boolean boostMinimalParticles = false;
-
-    /** Force the cheapest ambient occlusion level. Applied once at startup. */
-    public boolean boostFastAmbientOcclusion = false;
-
-    // ---------------- stability (frame-rate smoothing) ----------------
-
-    /** Master switch for the FPS stabilizer: watch the real frame cadence and keep it steady. */
-    public boolean stabilityFpsGovernor = true;
-
-    /** Desired average FPS; the stabilizer intervenes when the smoothed rate sits below this. */
-    public int stabilityTargetFps = 60;
-
-    /** Shrink the particle budget while FPS is low, restore it once the frame rate recovers. */
-    public boolean stabilityAdaptiveParticles = true;
-
-    /** Log a warning the first time a frame exceeds the stutter threshold. */
-    public boolean stabilityLogStutters = true;
-
-    /** A frame longer than this (milliseconds) counts as a stutter. */
-    public int stabilityStutterMs = 100;
-
-    /**
-     * Shrink entity / block-entity / item cull distances while FPS is low, and relax them back
-     * once the frame rate recovers. Lives entirely in the render fast-path and never touches
-     * game logic, so it cannot change behaviour.
-     */
-    public boolean stabilityAdaptiveCulling = true;
-
-    /** Lower bound (blocks) the cull distance may be shrunk to while under load. */
-    public double stabilityMinCullDistance = 48.0D;
-
-    /**
-     * Frames between two adaptive-culling adjustments. Re-evaluating every frame made the
-     * radius oscillate around the point where the frame time crossed the target, and an
-     * oscillating radius is visible as objects popping in and out at the edge of the cull.
-     * Larger values are smoother and cheaper; {@code 1} restores the previous behaviour.
-     */
-    public int stabilityAdaptInterval = 6;
-
-    // ---------------- memory ----------------
-
-    /** Sample heap usage on a daemon thread and log a periodic report. */
-    public boolean memoryWatchdog = true;
-
-    /** How often (seconds) the watchdog logs a heap report. */
-    public int memoryWatchdogIntervalSeconds = 300;
-
-    private VeloxConfig() {
+        /** 清空全部自定义标记（恢复跟随档位时调用）。 */
+        public void clear() {
+            renderDistance = null;
+            simulationDistance = null;
+            entityDistanceScaling = null;
+            particles = null;
+            clouds = null;
+            framerateLimit = null;
+            useVsync = null;
+            graphicsMode = null;
+            entityShadows = null;
+        }
     }
 
-    /**
-     * Read the config file, creating it with commented defaults if it does not exist yet.
-     * Called from the main entry point.
-     */
-    public void load() {
-        Path file = configFile();
+    // =====================================================================
+    // 五档预设
+    // =====================================================================
+
+    /** 一档的完整参数快照，字段与 VeloxFast 一一对应。 */
+    public static final class Profile {
+        // tick：v1.1 起永久禁用（玩法安全），字段保留只为兼容，五档恒 false
+        public boolean tickGoalSelectorEmptyFastPath;
+        public boolean tickGoalSelectorSkipWhenIdle;
+        public boolean tickMobAiThrottle;
+        public double tickMobAiThrottleDistance;
+        public int tickMobAiThrottleInterval;
+
+        // render
+        public double renderBlockEntityDistance;
+        public double renderEntityDistance;
+        public double renderItemDistance;
+        public double renderExperienceOrbDistance;
+        public int renderParticleBudget;
+
+        // stability
+        public boolean stabilityFpsGovernor;
+        public boolean stabilityAdaptiveParticles;
+        public boolean stabilityAdaptiveCulling;
+        public int stabilityAdaptInterval;
+        public boolean stabilityLogStutters;
+        public int stabilityStutterMs;
+
+        // memory
+        public boolean memoryWatchdog;
+        public int memoryWatchdogIntervalSeconds;
+
+        // boost（启动时一次性，切 vanilla 时恢复）
+        public boolean boostGraphicsMode;
+        public boolean boostDisableClouds;
+        public boolean boostDisableEntityShadows;
+        public boolean boostMinimalParticles;
+        public boolean boostFastAmbientOcclusion;
+
+        // 诊断
+        public boolean collectStats;
+    }
+
+    /** 五档取值，下标与 MODES 对齐：0=auto 1=safe 2=eco 3=aggressive 4=vanilla。 */
+    public static final Profile[] PROFILES = buildProfiles();
+
+    private static Profile[] buildProfiles() {
+        Profile auto = new Profile();
+        Profile safe = new Profile();
+        Profile eco = new Profile();
+        Profile aggressive = new Profile();
+        Profile vanilla = new Profile();
+
+        // ---------------- Vanilla：全部关闭，等同原版 ----------------
+        vanilla.renderBlockEntityDistance = 0;
+        vanilla.renderEntityDistance = 0;
+        vanilla.renderItemDistance = 0;
+        vanilla.renderExperienceOrbDistance = 0;
+        vanilla.renderParticleBudget = 0;
+        vanilla.stabilityFpsGovernor = false;
+        vanilla.stabilityAdaptiveParticles = false;
+        vanilla.stabilityAdaptiveCulling = false;
+        vanilla.stabilityAdaptInterval = 0;
+        vanilla.stabilityLogStutters = false;
+        vanilla.stabilityStutterMs = 200;
+        vanilla.memoryWatchdog = false;
+        vanilla.memoryWatchdogIntervalSeconds = 0;
+        vanilla.boostGraphicsMode = false;
+        vanilla.boostDisableClouds = false;
+        vanilla.boostDisableEntityShadows = false;
+        vanilla.boostMinimalParticles = false;
+        vanilla.boostFastAmbientOcclusion = false;
+        vanilla.collectStats = false;
+
+        // ---------------- Safe ----------------
+        safe.renderBlockEntityDistance = 32;
+        safe.renderEntityDistance = 64;
+        safe.renderItemDistance = 16;
+        safe.renderExperienceOrbDistance = 24;
+        safe.renderParticleBudget = 4000;
+        safe.stabilityFpsGovernor = true;
+        safe.stabilityAdaptiveParticles = true;
+        safe.stabilityAdaptiveCulling = false;
+        safe.stabilityAdaptInterval = 60;
+        safe.stabilityLogStutters = true;
+        safe.stabilityStutterMs = 200;
+        safe.memoryWatchdog = true;
+        safe.memoryWatchdogIntervalSeconds = 60;
+        safe.boostGraphicsMode = true;
+        safe.boostDisableClouds = true;
+        safe.boostDisableEntityShadows = true;
+        safe.boostMinimalParticles = true;
+        safe.boostFastAmbientOcclusion = true;
+        safe.collectStats = false;
+
+        // ---------------- Eco：偏向省内存省电 ----------------
+        eco.renderBlockEntityDistance = 24;
+        eco.renderEntityDistance = 48;
+        eco.renderItemDistance = 12;
+        eco.renderExperienceOrbDistance = 16;
+        eco.renderParticleBudget = 2000;
+        eco.stabilityFpsGovernor = true;
+        eco.stabilityAdaptiveParticles = true;
+        eco.stabilityAdaptiveCulling = true;
+        eco.stabilityAdaptInterval = 60;
+        eco.stabilityLogStutters = true;
+        eco.stabilityStutterMs = 200;
+        eco.memoryWatchdog = true;
+        eco.memoryWatchdogIntervalSeconds = 30;
+        eco.boostGraphicsMode = true;
+        eco.boostDisableClouds = true;
+        eco.boostDisableEntityShadows = true;
+        eco.boostMinimalParticles = true;
+        eco.boostFastAmbientOcclusion = true;
+        eco.collectStats = false;
+
+        // ---------------- Aggressive：能开的全开、距离拉满 ----------------
+        aggressive.renderBlockEntityDistance = 48;
+        aggressive.renderEntityDistance = 128;
+        aggressive.renderItemDistance = 32;
+        aggressive.renderExperienceOrbDistance = 48;
+        aggressive.renderParticleBudget = 8000;
+        aggressive.stabilityFpsGovernor = true;
+        aggressive.stabilityAdaptiveParticles = true;
+        aggressive.stabilityAdaptiveCulling = true;
+        aggressive.stabilityAdaptInterval = 60;
+        aggressive.stabilityLogStutters = true;
+        aggressive.stabilityStutterMs = 200;
+        aggressive.memoryWatchdog = true;
+        aggressive.memoryWatchdogIntervalSeconds = 15;
+        aggressive.boostGraphicsMode = true;
+        aggressive.boostDisableClouds = true;
+        aggressive.boostDisableEntityShadows = true;
+        aggressive.boostMinimalParticles = true;
+        aggressive.boostFastAmbientOcclusion = true;
+        aggressive.collectStats = false;
+
+        // ---------------- Auto：以 Safe 为基准起步，运行期由 VeloxAutoTuner 动态调整 ----------------
+        auto.renderBlockEntityDistance = 32;
+        auto.renderEntityDistance = 64;
+        auto.renderItemDistance = 16;
+        auto.renderExperienceOrbDistance = 24;
+        auto.renderParticleBudget = 4000;
+        auto.stabilityFpsGovernor = true;
+        auto.stabilityAdaptiveParticles = true;
+        auto.stabilityAdaptiveCulling = false; // 动态开关由 AutoTuner 控制
+        auto.stabilityAdaptInterval = 60;
+        auto.stabilityLogStutters = true;
+        auto.stabilityStutterMs = 200;
+        auto.memoryWatchdog = true;
+        auto.memoryWatchdogIntervalSeconds = 60;
+        auto.boostGraphicsMode = true;
+        auto.boostDisableClouds = true;
+        auto.boostDisableEntityShadows = true;
+        auto.boostMinimalParticles = true;
+        auto.boostFastAmbientOcclusion = true;
+        auto.collectStats = false;
+
+        return new Profile[]{auto, safe, eco, aggressive, vanilla};
+    }
+
+    // =====================================================================
+    // 读写
+    // =====================================================================
+
+    private Path file;
+
+    public Path getFile() {
         if (file == null) {
-            Velox.LOGGER.warn("[Velox] No usable config directory - using built-in defaults.");
-            return;
+            file = FabricLoader.getInstance().getConfigDir().resolve("velox.json");
         }
-
-        if (!Files.exists(file)) {
-            writeDefault(file);
-        }
-
-        Properties props = new Properties();
-        try (InputStream in = Files.newInputStream(file)) {
-            props.load(in);
-        } catch (IOException e) {
-            Velox.LOGGER.warn("[Velox] Could not read {}, falling back to defaults", file, e);
-            return;
-        }
-
-        apply(props);
-        Velox.LOGGER.info("[Velox] Config loaded from {}", file);
+        return file;
     }
 
-    /**
-     * Read the config file without ever creating it.
-     *
-     * <p>Used by {@code VeloxMixinPlugin}, which runs while game classes are still being
-     * transformed. That is far too early to create files in the config directory, and far
-     * too early to assume the logger exists. A missing file therefore simply leaves the
-     * field defaults standing - which are exactly the {@code safe} preset.</p>
-     *
-     * <p>Must stay idempotent: the entry point loads the config again afterwards, and a
-     * second pass must produce the same values as the first.</p>
-     */
+    /** 启动时调用一次。文件不存在就按默认（auto）写一份。 */
+    public void load() {
+        Path p = getFile();
+        if (!Files.exists(p)) {
+            applyProfile();
+            save();
+            return;
+        }
+        try (Reader r = Files.newBufferedReader(p)) {
+            VeloxConfig loaded = GSON.fromJson(r, VeloxConfig.class);
+            if (loaded != null) {
+                this.mode = normalizeMode(loaded.mode);
+                this.targetFps = loaded.targetFps > 0 ? loaded.targetFps : 60;
+                this.vanillaFollow = loaded.vanillaFollow != null ? loaded.vanillaFollow : new VanillaFollowState();
+            }
+        } catch (Exception e) {
+            Velox.LOGGER.warn("[Velox] 读取配置失败，使用默认 auto 档: {}", p, e);
+        }
+    }
+
+    /** 启动早期只读加载（VeloxMixinPlugin 用，不写盘、不打日志）。 */
     public void readOnlyLoad() {
-        Path file = configFile();
-        if (file == null || !Files.exists(file)) {
+        Path p = getFile();
+        if (!Files.exists(p)) {
             return;
         }
-
-        Properties props = new Properties();
-        try (InputStream in = Files.newInputStream(file)) {
-            props.load(in);
-        } catch (IOException e) {
-            return;
-        }
-
-        apply(props);
-    }
-
-    /**
-     * Apply a parsed properties table. Every value the preset owns is rewritten here, so
-     * calling this twice with a different profile in between cannot leave stale values behind.
-     */
-    public void apply(Properties props) {
-        this.profile = readString(props, "profile", this.profile);
-        applyProfile(this.profile.trim().toLowerCase(java.util.Locale.ROOT));
-
-        this.tickGoalSelectorEmptyFastPath =
-                read(props, "tick.goal_selector_empty_fast_path", this.tickGoalSelectorEmptyFastPath);
-        this.tickGoalSelectorSkipWhenIdle =
-                read(props, "tick.goal_selector_skip_when_idle", this.tickGoalSelectorSkipWhenIdle);
-        this.tickMobAiThrottle =
-                read(props, "tick.mob_ai_throttle", this.tickMobAiThrottle);
-        this.tickMobAiThrottleDistance =
-                read(props, "tick.mob_ai_throttle_distance", this.tickMobAiThrottleDistance);
-        this.tickMobAiThrottleInterval =
-                read(props, "tick.mob_ai_throttle_interval", this.tickMobAiThrottleInterval);
-        this.renderBlockEntityDistance =
-                read(props, "render.block_entity_distance", this.renderBlockEntityDistance);
-        this.renderEntityDistance =
-                read(props, "render.entity_distance", this.renderEntityDistance);
-        this.renderItemDistance =
-                read(props, "render.item_distance", this.renderItemDistance);
-        this.renderExperienceOrbDistance =
-                read(props, "render.experience_orb_distance", this.renderExperienceOrbDistance);
-        this.renderParticleBudget =
-                read(props, "render.particle_budget", this.renderParticleBudget);
-        this.collectStats =
-                read(props, "collect_stats", this.collectStats);
-        this.boostGraphicsMode =
-                read(props, "boost.graphics_mode", this.boostGraphicsMode);
-        this.boostDisableClouds =
-                read(props, "boost.disable_clouds", this.boostDisableClouds);
-        this.boostDisableEntityShadows =
-                read(props, "boost.disable_entity_shadows", this.boostDisableEntityShadows);
-        this.boostMinimalParticles =
-                read(props, "boost.minimal_particles", this.boostMinimalParticles);
-        this.boostFastAmbientOcclusion =
-                read(props, "boost.fast_ambient_occlusion", this.boostFastAmbientOcclusion);
-        this.stabilityFpsGovernor =
-                read(props, "stability.fps_governor", this.stabilityFpsGovernor);
-        this.stabilityTargetFps =
-                read(props, "stability.target_fps", this.stabilityTargetFps);
-        this.stabilityAdaptiveParticles =
-                read(props, "stability.adaptive_particles", this.stabilityAdaptiveParticles);
-        this.stabilityLogStutters =
-                read(props, "stability.log_stutters", this.stabilityLogStutters);
-        this.stabilityStutterMs =
-                read(props, "stability.stutter_ms", this.stabilityStutterMs);
-        this.stabilityAdaptiveCulling =
-                read(props, "stability.adaptive_culling", this.stabilityAdaptiveCulling);
-        this.stabilityMinCullDistance =
-                read(props, "stability.min_cull_distance", this.stabilityMinCullDistance);
-        this.stabilityAdaptInterval =
-                read(props, "stability.adapt_interval", this.stabilityAdaptInterval);
-        this.memoryWatchdog =
-                read(props, "memory.watchdog", this.memoryWatchdog);
-        this.memoryWatchdogIntervalSeconds =
-                read(props, "memory.watchdog_interval_seconds", this.memoryWatchdogIntervalSeconds);
-    }
-
-    /**
-     * Apply a preset. Values here are the <em>base</em>; anything written explicitly in the
-     * properties file is read afterwards and overwrites them, so the file always wins.
-     *
-     * <p>Every branch assigns <em>every</em> key the preset owns, including {@code safe}.
-     * Leaving one branch empty would make the preset non-idempotent: switching to another
-     * profile and back would keep the other profile's values, which is exactly what happens
-     * now that the mixin plugin reads the config before the entry point does.</p>
-     */
-    private void applyProfile(String name) {
-        switch (name) {
-            case "balanced":
-                renderItemDistance = 32.0D;
-                renderExperienceOrbDistance = 0.0D;
-                renderBlockEntityDistance = 0.0D;
-                renderEntityDistance = 0.0D;
-                renderParticleBudget = 400;
-                tickMobAiThrottle = false;
-                tickMobAiThrottleDistance = 48.0D;
-                tickMobAiThrottleInterval = 4;
-                boostMinimalParticles = false;
-                boostFastAmbientOcclusion = false;
-                break;
-            case "aggressive":
-                renderItemDistance = 32.0D;
-                renderExperienceOrbDistance = 32.0D;
-                renderBlockEntityDistance = 64.0D;
-                renderEntityDistance = 96.0D;
-                renderParticleBudget = 300;
-                tickMobAiThrottle = true;
-                tickMobAiThrottleDistance = 48.0D;
-                tickMobAiThrottleInterval = 4;
-                boostMinimalParticles = true;
-                boostFastAmbientOcclusion = true;
-                break;
-            case "safe":
-            default:
-                renderItemDistance = 32.0D;
-                renderExperienceOrbDistance = 0.0D;
-                renderBlockEntityDistance = 0.0D;
-                renderEntityDistance = 0.0D;
-                renderParticleBudget = 0;
-                tickMobAiThrottle = false;
-                tickMobAiThrottleDistance = 48.0D;
-                tickMobAiThrottleInterval = 4;
-                boostMinimalParticles = false;
-                boostFastAmbientOcclusion = false;
-                break;
+        try (Reader r = Files.newBufferedReader(p)) {
+            VeloxConfig loaded = GSON.fromJson(r, VeloxConfig.class);
+            if (loaded != null) {
+                this.mode = normalizeMode(loaded.mode);
+                this.targetFps = loaded.targetFps > 0 ? loaded.targetFps : 60;
+                this.vanillaFollow = loaded.vanillaFollow != null ? loaded.vanillaFollow : new VanillaFollowState();
+            }
+        } catch (Exception ignored) {
+            // 读取失败就用字段默认值（auto），不抛出
         }
     }
 
-    /**
-     * Where the config file lives.
-     *
-     * <p>The mixin plugin asks for this while the loader may still be initialising, so a
-     * failure falls back to a relative path rather than propagating. It may resolve to the
-     * wrong directory in a rare launch layout, and the consequence is only that the plugin
-     * sees defaults - never a crash.</p>
-     */
-    public static Path configFile() {
+    /** 立即写盘。切档、恢复跟随档位后都会调用。 */
+    public void save() {
+        Path p = getFile();
         try {
-            return FabricLoader.getInstance().getConfigDir().resolve("velox.properties");
-        } catch (Throwable t) {
-            try {
-                return Path.of("config", "velox.properties");
-            } catch (RuntimeException ignored) {
-                return null;
+            Files.createDirectories(p.getParent());
+            try (Writer w = Files.newBufferedWriter(p)) {
+                GSON.toJson(this, w);
+            }
+        } catch (IOException e) {
+            Velox.LOGGER.warn("[Velox] 写配置失败: {}", p, e);
+        }
+    }
+
+    /** 把非法档位名折回 auto。 */
+    public static String normalizeMode(String m) {
+        if (m == null) {
+            return "auto";
+        }
+        String v = m.trim().toLowerCase(Locale.ROOT);
+        for (String s : MODES) {
+            if (s.equals(v)) {
+                return s;
+            }
+        }
+        return "auto";
+    }
+
+    public int modeIndex() {
+        String m = normalizeMode(this.mode);
+        for (int i = 0; i < MODES.length; i++) {
+            if (MODES[i].equals(m)) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    /** 当前档位中文名。 */
+    public String modeNameZh() {
+        return MODE_NAMES_ZH[modeIndex()];
+    }
+
+    /**
+     * 切档并立即生效 + 写盘。指令与界面都走这里，保证两边读同一个状态。
+     * 返回是否真的发生了切换（同档重复切返回 false）。
+     */
+    public boolean setProfile(String newMode) {
+        String m = normalizeMode(newMode);
+        if (m.equals(normalizeMode(this.mode))) {
+            return false;
+        }
+        this.mode = m;
+        applyProfile();
+        save();
+        return true;
+    }
+
+    /**
+     * 把当前档位铺到热路径静态快照上（热重载核心）。
+     * 任何切档来源（指令/界面）最终都走这里。
+     */
+    public void applyProfile() {
+        Profile p = PROFILES[modeIndex()];
+        String m = normalizeMode(this.mode);
+        VeloxFast.applyProfile(p, m);
+        VeloxRuntime.collectStats = p.collectStats;
+        // 内存看门狗：vanilla 档停线程并释放资源，其它档确保在跑。
+        if (p.memoryWatchdog) {
+            MemoryWatchdog.start();
+        } else {
+            MemoryWatchdog.stop();
+        }
+        // FPS 稳定器按新档参数重建（init 可重入）。
+        VeloxStabilizer.init();
+        // Auto 调参器：仅 auto 档运行，其它档停止并复位到档位基准。
+        if ("auto".equals(m)) {
+            VeloxAutoTuner.start();
+        } else {
+            VeloxAutoTuner.stop();
+        }
+        // vanilla 档：恢复启动期 boost 改过的图形项（见 VeloxClientBoost）。
+        // 非 vanilla 档：若已进入游戏（Minecraft 已构造），重新应用 boost，
+        // 以便从 vanilla 切回来时把图形加速补上（启动期 boost 由 MinecraftInitMixin 触发）。
+        if ("vanilla".equals(m)) {
+            VeloxClientBoost.restoreBoostedOptions();
+        } else {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc != null && mc.options != null) {
+                VeloxClientBoost.apply();
             }
         }
     }
 
-    private void writeDefault(Path file) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("# Velox configuration\n");
-        sb.append("# Changes require a game restart.\n");
-        sb.append("# Any key can also be passed as a JVM system property, e.g. -Drender.block_entity_distance=48\n");
-        sb.append('\n');
-
-        sb.append("# Pick a starting preset: safe | balanced | aggressive\n");
-        sb.append("# It decides every value below. To override one, uncomment it - a live\n");
-        sb.append("# key always beats the preset (that is why the defaults are commented out).\n");
-        sb.append("profile=safe\n");
-        sb.append('\n');
-
-        sb.append("# --- TICK ---\n");
-        comment(sb, "tick.goal_selector_empty_fast_path", tickGoalSelectorEmptyFastPath,
-                "Skip ticking a GoalSelector that has no goals registered at all.");
-        comment(sb, "tick.goal_selector_skip_when_idle", tickGoalSelectorSkipWhenIdle,
-                "Skip ticking running goals when nothing is running.");
-        sb.append("# CHANGES GAMEPLAY: distant mobs react slower. Measure before keeping it on.\n");
-        comment(sb, "tick.mob_ai_throttle", tickMobAiThrottle,
-                "Run mob AI less often for mobs far from every player.");
-        comment(sb, "tick.mob_ai_throttle_distance", tickMobAiThrottleDistance,
-                "Distance (blocks) past which mob AI may be throttled.");
-        comment(sb, "tick.mob_ai_throttle_interval", tickMobAiThrottleInterval,
-                "A throttled mob runs its AI once every N ticks.");
-
-        sb.append("# --- RENDER (client only) ---\n");
-        sb.append("# CPU-vs-GPU trade: off by default. Turn ON only if your GPU is the bottleneck.\n");
-        comment(sb, "render.block_entity_distance", renderBlockEntityDistance,
-                "Block entity render distance in blocks. 0 = vanilla (no extra culling).");
-        comment(sb, "render.entity_distance", renderEntityDistance,
-                "Entity render distance in blocks. 0 = vanilla (no extra culling).");
-        comment(sb, "render.item_distance", renderItemDistance,
-                "Dropped item render distance. Tighter than entity_distance is usually right.");
-        comment(sb, "render.experience_orb_distance", renderExperienceOrbDistance,
-                "Experience orb render distance. 0 = uses entity_distance.");
-        comment(sb, "render.particle_budget", renderParticleBudget,
-                "Max NEW particles accepted per 20ms window. 0 = unlimited.");
-
-        sb.append("# --- CLIENT BOOST (applied once at startup, zero per-frame cost) ---\n");
-        sb.append("# These change vanilla video settings. Change them back in the game menu if you dislike them.\n");
-        comment(sb, "boost.graphics_mode", boostGraphicsMode,
-                "Force fast graphics: no fancy leaves, no transparent textures.");
-        comment(sb, "boost.disable_clouds", boostDisableClouds,
-                "Force clouds off.");
-        comment(sb, "boost.disable_entity_shadows", boostDisableEntityShadows,
-                "Force entity shadows off.");
-        comment(sb, "boost.minimal_particles", boostMinimalParticles,
-                "Force the vanilla particle setting to Minimal.");
-        comment(sb, "boost.fast_ambient_occlusion", boostFastAmbientOcclusion,
-                "Force the cheapest ambient occlusion level.");
-        sb.append('\n');
-
-        sb.append("# --- DIAGNOSTICS ---\n");
-        sb.append("# Leave this off during normal play. Counters are cheap, not free:\n");
-        sb.append("# in v1 the instrumentation cost more than the optimizations saved.\n");
-        comment(sb, "collect_stats", collectStats,
-                "Count how often each optimization fires (logs on first hit).");
-
-        sb.append("# --- STABILITY (frame-rate smoothing) ---\n");
-        sb.append("# Keeps the frame rate steady under load by watching the real frame cadence\n");
-        sb.append("# and - when the particle limiter is on - shrinking the particle budget while\n");
-        sb.append("# FPS is low, then restoring it once the frame rate recovers.\n");
-        comment(sb, "stability.fps_governor", stabilityFpsGovernor,
-                "Master switch for the FPS stabilizer.");
-        comment(sb, "stability.target_fps", stabilityTargetFps,
-                "Desired average FPS; below this the stabilizer intervenes.");
-        comment(sb, "stability.adaptive_particles", stabilityAdaptiveParticles,
-                "Shrink the particle budget when FPS drops, restore when it recovers.");
-        comment(sb, "stability.log_stutters", stabilityLogStutters,
-                "Log a warning when a frame exceeds the stutter threshold.");
-        comment(sb, "stability.stutter_ms", stabilityStutterMs,
-                "A frame longer than this (ms) counts as a stutter.");
-        comment(sb, "stability.adaptive_culling", stabilityAdaptiveCulling,
-                "Shrink entity/block-entity cull distances when FPS is low, restore when it recovers.");
-        comment(sb, "stability.min_cull_distance", stabilityMinCullDistance,
-                "Cull distance (blocks) the stabilizer will not go below under load.");
-        comment(sb, "stability.adapt_interval", stabilityAdaptInterval,
-                "Frames between adaptive-culling adjustments (higher = smoother).");
-        sb.append('\n');
-
-        sb.append("# --- MEMORY ---\n");
-        comment(sb, "memory.watchdog", memoryWatchdog,
-                "Log periodic heap usage reports (diagnostics only).");
-        comment(sb, "memory.watchdog_interval_seconds", memoryWatchdogIntervalSeconds,
-                "Seconds between heap reports.");
-
-        try {
-            Files.createDirectories(file.getParent());
-            Files.writeString(file, sb.toString());
-        } catch (IOException e) {
-            Velox.LOGGER.warn("[Velox] Could not write default config to {}", file, e);
-        }
-    }
-
-    /**
-     * Writes a key in commented-out form: {@code #key=value}.
-     *
-     * <p>This is deliberate. If every key were written as a live value, the values in the
-     * file would always override whatever {@code profile} selects, and the presets would
-     * silently do nothing. Commented out, the profile wins until you uncomment a key - which
-     * is the behaviour you want: pick a preset, then override only what you care about.</p>
-     */
-    private static void comment(StringBuilder sb, String key, Object def, String doc) {
-        sb.append('#').append(' ').append(doc).append('\n');
-        sb.append('#').append(key).append('=').append(def).append('\n');
-        sb.append('\n');
-    }
-
-    // ---------------- generic readers ----------------
-
-    private static boolean read(Properties props, String key, boolean def) {
-        String sys = System.getProperty(key);
-        if (sys != null) {
-            return Boolean.parseBoolean(sys.trim());
-        }
-        String v = props.getProperty(key);
-        return v == null ? def : Boolean.parseBoolean(v.trim());
-    }
-
-    private static int read(Properties props, String key, int def) {
-        String raw = System.getProperty(key, props.getProperty(key));
-        if (raw == null) {
-            return def;
-        }
-        try {
-            return Integer.parseInt(raw.trim());
-        } catch (NumberFormatException e) {
-            Velox.LOGGER.warn("[Velox] Invalid int for {}: '{}', using {}", key, raw, def);
-            return def;
-        }
-    }
-
-    private static String readString(Properties props, String key, String def) {
-        String sys = System.getProperty(key);
-        if (sys != null) {
-            return sys.trim();
-        }
-        return props.getProperty(key, def);
-    }
-
-    private static double read(Properties props, String key, double def) {
-        String raw = System.getProperty(key, props.getProperty(key));
-        if (raw == null) {
-            return def;
-        }
-        try {
-            return Double.parseDouble(raw.trim());
-        } catch (NumberFormatException e) {
-            Velox.LOGGER.warn("[Velox] Invalid double for {}: '{}', using {}", key, raw, def);
-            return def;
-        }
+    /** 当前档的参数快照（只读）。 */
+    public Profile current() {
+        return PROFILES[modeIndex()];
     }
 }

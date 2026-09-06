@@ -28,6 +28,10 @@ repositories {
         name = 'Mojang'
         url = 'https://libraries.minecraft.net/'
     }
+    maven {
+        name = 'TerraformersMC'
+        url = 'https://maven.terraformersmc.com/'
+    }
 }
 
 dependencies {
@@ -43,6 +47,13 @@ dependencies {
     }
 
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+    // Fabric API：提供客户端指令、联机事件、生命周期事件等。Velox 的 /velox 指令与
+    // 联机守卫、原版设置跟随初始化都依赖它。
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.141.2+1.21.11"
+    // Mod Menu：配置界面入口（仅编译期需要其 API；运行期由玩家自行安装 Mod Menu）。
+    modCompileOnly "com.terraformersmc:modmenu:17.0.0-beta.2"
+    modRuntimeOnly "com.terraformersmc:modmenu:17.0.0-beta.2"
 }
 
 processResources {

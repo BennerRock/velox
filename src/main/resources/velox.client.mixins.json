@@ -10,7 +10,8 @@
     "EntityRenderDistanceMixin",
     "ParticleEngineTickMixin",
     "ParticleEngineAddMixin",
-    "GameLoopMixin"
+    "GameLoopMixin",
+    "OptionInstanceMixin"
   ],
   "injectors": {
     "defaultRequire": 0

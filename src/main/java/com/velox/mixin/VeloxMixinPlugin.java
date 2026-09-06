@@ -76,54 +76,16 @@ public final class VeloxMixinPlugin implements IMixinConfigPlugin {
     }
 
     private boolean decideTick(String simpleName) {
-        VeloxConfig c = config();
-        switch (simpleName) {
-            case "GoalSelectorMixin":
-                return c.tickGoalSelectorEmptyFastPath;
-            case "GoalSelectorTickRunningMixin":
-                return c.tickGoalSelectorSkipWhenIdle;
-            case "MobAiThrottleMixin":
-                return c.tickMobAiThrottle;
-            default:
-                return true;
-        }
+        // v1.1 起：所有 tick 类游戏逻辑优化（含生物 AI 节流、目标选择器）永久禁用，
+        // 以确保绝不改变原版玩法。相关 mixin 不再注入，零成本、零风险。
+        return false;
     }
 
     private boolean decideClient(String simpleName) {
-        VeloxConfig c = config();
-        switch (simpleName) {
-            case "BlockEntityRenderDispatcherMixin":
-                return c.renderBlockEntityDistance > 0.0D;
-            case "EntityRenderDistanceMixin":
-                // One mixin carries the general, item-only and orb-only culls, so it has to
-                // be applied if any of those radii is live. The per-entity branch inside
-                // still picks the right limit and bails out when its own limit is zero.
-                return c.renderEntityDistance > 0.0D
-                        || c.renderItemDistance > 0.0D
-                        || c.renderExperienceOrbDistance > 0.0D;
-            case "ParticleEngineAddMixin":
-                // The expensive half: 'add' is called thousands of times a second during a
-                // storm, and it is the one that must allocate a CallbackInfo to be able to
-                // cancel. With the limiter off there is nothing to cancel - so it is gone.
-                return c.renderParticleBudget > 0;
-            case "ParticleEngineTickMixin":
-                // Cheap and load-bearing: it is the per-frame heartbeat that resets the
-                // particle budget and advances the frame clock used by the camera cache.
-                // Non-cancellable, one call per frame.
-                return true;
-            case "GameLoopMixin":
-                // The FPS stabilizer's per-frame hook. Off when the governor is disabled, so
-                // the stabilizer costs nothing in that case.
-                return c.stabilityFpsGovernor;
-            case "MinecraftInitMixin":
-                return c.boostGraphicsMode
-                        || c.boostDisableClouds
-                        || c.boostDisableEntityShadows
-                        || c.boostMinimalParticles
-                        || c.boostFastAmbientOcclusion;
-            default:
-                return true;
-        }
+        // 客户端渲染/测量 mixin 始终注入：这样「运行时切档」才能即时生效
+        // （mixin 无法卸载，靠注入点内部的运行时开关短路）。vanilla 档下这些
+        // mixin 会在第一行判断后直接 return，开销仅为每帧一次非 cancellable 方法调用。
+        return true;
     }
 
     private VeloxConfig config() {

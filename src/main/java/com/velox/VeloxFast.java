@@ -1,347 +1,289 @@
 package com.velox;
 
+
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 
 /**
- * Hot-path snapshot of the configuration, plus a per-frame camera cache.
+ * 热路径静态快照 + 摄像机缓存。
  *
- * <p>v1 read settings straight off {@code VeloxConfig.INSTANCE} inside the render loop.
- * That is two field hops executed thousands of times per frame, and on a CPU-bound machine
- * it cost more than the render work it was trying to skip. This class exists so the hot
- * path never does an instance lookup: every value is a plain static field, read once at
- * startup and reloaded only when the config changes.</p>
+ * 热路径只读这里的静态字段，绝不回查 VeloxConfig.INSTANCE——热重载就是靠
+ * applyProfile(profile, mode) 整体覆盖这些字段实现的：任意时刻切档（指令/界面/Auto
+ * 调参）都立即写这里，mixin 下一次调用就是新模式。这就是「已缓存、已调度、已注册的
+ * 部分同步切过去」的具体含义：
+ * - 已缓存：粒子预算计数器、剔除距离平方、自适应值被重置为档位值；
+ * - 已调度：Auto 调参器启停（VeloxAutoTuner）；
+ * - 已注册：看门狗线程启停（MemoryWatchdog）。
  *
- * <p>Squared distances are precomputed here too - the render loop only ever needs the
- * squared form for its comparison, so there is no reason to multiply per entity.</p>
+ * 字段全部 volatile：切档发生在客户端线程（指令/界面），而部分计数器可能被渲染线程
+ * 之外触碰；volatile 保证新模式对下一次读取立即可见，代价可以忽略（非热路径写）。
  *
- * <h3>Why every Minecraft lookup is wrapped</h3>
- * <p>Velox was written without the 1.21.11 sources, so the class it asks for by name only
- * exists if the jar was remapped by Fabric Loom. If it was not, the first lookup throws
- * {@code NoClassDefFoundError} - and in v1 that propagated out of the client entry point and
- * crashed the game. A mod that cannot resolve its targets must go quiet, not take the game
- * down with it.</p>
+ * tick 组字段保留但 v1.1 起恒 false：相关 mixin 已在 VeloxMixinPlugin 里停用，
+ * 字段只为保持旧代码可编译，不再有写入路径。
  *
- * <p>So each lookup is attempted once. On failure the feature is switched off permanently and
- * the reason is logged: throwing repeatedly would be far worse than the problem it reports.</p>
+ * 平方距离在这里预乘，渲染循环只比平方值，不再逐实体乘法。
+ *
+ * 为什么每个 Minecraft 查询都包 try：未 remap 的 jar 里类名不存在，首次查询会抛
+ * NoClassDefFoundError。每个查询只试一次，失败就永久关掉对应功能并记日志，
+ * 绝不让渲染循环崩掉。
  */
 public final class VeloxFast {
-
-    // ---- tick ----
-    public static boolean tickGoalSelectorEmpty;
-    public static boolean tickGoalSelectorIdle;
-    public static boolean tickMobAiThrottle;
-    public static double tickMobAiThrottleDistSq;
-    public static int tickMobAiThrottleInterval;
-
-    // ---- render ----
-    public static boolean beCullEnabled;
-    public static double beCullDistSq;
-
-    public static boolean entityCullEnabled;
-    public static double entityCullDistSq;
-
-    public static boolean itemCullEnabled;
-    public static double itemCullDistSq;
-
-    /** Experience orbs get their own radius: mob farms and the dragon leave hundreds behind. */
-    public static boolean xpCullEnabled;
-    public static double xpCullDistSq;
-
-    public static boolean particleLimiterEnabled;
-    public static int particleBudget;
-    /**
-     * Runtime particle cap the FPS stabilizer tunes; starts equal to {@link #particleBudget} and
-     * is only ever shrunk/grown while {@code stability.adaptive_particles} is on. The limiter
-     * reads this, not the static config value, so the stabilizer can react without a reload.
-     */
-    public static int effectiveParticleBudget;
-
-    // ---- stability (FPS governor) ----
-    public static boolean fpsGovernor;
-    public static int targetFps;
-    public static boolean adaptiveParticles;
-    public static boolean logStutters;
-    public static int stutterMs;
-
-    // ---- adaptive culling (original, runtime-tuned) ----
-    /** Master switch for runtime-tuned distance culling. */
-    public static boolean adaptiveCulling;
-    /** Lower bound (squared blocks) cull distances may be shrunk to under load. */
-    public static double minCullDistSq;
-    /** Configured (full) entity cull distance squared - the value we relax back to. */
-    public static double entityCullBaseSq;
-    /** Configured block-entity cull distance squared. */
-    public static double beCullBaseSq;
-    /** Configured item cull distance squared. */
-    public static double itemCullBaseSq;
-    /** Configured experience-orb cull distance squared. */
-    public static double xpCullBaseSq;
-
-    /** Frames between two adaptive-culling adjustments (see {@link #adaptCulling}). */
-    public static int adaptInterval;
-    private static int adaptCountdown;
-
-    /** New particles accepted since the last frame heartbeat. Reset by {@link #onFrame()}. */
-    private static int particlesThisFrame;
-
-    /**
-     * Safety net for the limiter. If the per-frame heartbeat never fires - which is what a
-     * renamed {@code ParticleEngine#tick} looks like - the budget would fill up once and then
-     * block every new particle for the rest of the session. This is the fallback window, in
-     * calls, for that case.
-     */
-    private static final int PARTICLE_FALLBACK_WINDOW = 4096;
-
-    private static int particleResetFrame = -1;
-    private static int particleCallsSinceReset;
-
-    // ---- diagnostics ----
-    public static boolean collectStats;
 
     private VeloxFast() {
     }
 
-    /** Copy the config into the static fields. Called at startup and after a reload. */
-    public static void reload(VeloxConfig c) {
-        tickGoalSelectorEmpty = c.tickGoalSelectorEmptyFastPath;
-        tickGoalSelectorIdle = c.tickGoalSelectorSkipWhenIdle;
-        tickMobAiThrottle = c.tickMobAiThrottle;
-        tickMobAiThrottleDistSq = sq(c.tickMobAiThrottleDistance);
-        tickMobAiThrottleInterval = Math.max(2, c.tickMobAiThrottleInterval);
+    // ---- 模式状态（热重载可见）----
+    /** 当前是否 vanilla 档（全部优化短路）。 */
+    public static volatile boolean vanillaMode;
+    /**
+     * 帧心跳是否推进（ParticleEngineTickMixin 读取）。vanilla 档为 false：
+     * 心跳停止，帧时钟与粒子计数冻结，开销归零；切回其它档立即恢复。
+     */
+    public static volatile boolean tickHeartbeat;
 
-        beCullEnabled = c.renderBlockEntityDistance > 0.0D;
-        beCullDistSq = sq(c.renderBlockEntityDistance);
+    // ---- tick（v1.1 永久禁用，恒 false，保留只为兼容旧 mixin 代码）----
+    public static volatile boolean tickGoalSelectorEmpty = false;
+    public static volatile boolean tickGoalSelectorIdle = false;
+    public static volatile boolean tickMobAiThrottle = false;
+    public static volatile double tickMobAiThrottleDistSq;
+    public static volatile int tickMobAiThrottleInterval;
+
+    // ---- render ----
+    public static volatile boolean beCullEnabled;
+    public static volatile double beCullDistSq;
+    public static volatile double beCullBaseSq;
+
+    public static volatile boolean entityCullEnabled;
+    public static volatile double entityCullDistSq;
+    public static volatile double entityCullBaseSq;
+
+    public static volatile boolean itemCullEnabled;
+    public static volatile double itemCullDistSq;
+    public static volatile double itemCullBaseSq;
+
+    /** 经验球单独一个半径：刷怪场和龙战会留下几百个。 */
+    public static volatile boolean xpCullEnabled;
+    public static volatile double xpCullDistSq;
+    public static volatile double xpCullBaseSq;
+
+    public static volatile boolean particleLimiterEnabled;
+    public static volatile int particleBudget;
+    /**
+     * FPS 稳定器/Auto 档在运行期调的实时粒子上限，初始等于 particleBudget。
+     * 限制器读的是它而不是静态配置值，这样运行期调整不需要 reload。
+     */
+    public static volatile int effectiveParticleBudget;
+
+    // ---- stability ----
+    public static volatile boolean fpsGovernor;
+    public static volatile int targetFps;
+    public static volatile boolean adaptiveParticles;
+    public static volatile boolean adaptiveCulling;
+    public static volatile boolean logStutters;
+    public static volatile double stutterMs;
+
+    /** 自适应剔除的下限（平方），见 adaptCulling。 */
+    public static volatile double minCullDistSq;
+    /** 两次自适应剔除调整之间的帧数。 */
+    public static volatile int adaptInterval;
+    private static int adaptCountdown;
+
+    // ---- 诊断 ----
+    /** 从 VeloxRuntime#collectStats 镜像过来；默认关，开着才会计数。 */
+    public static volatile boolean collectStats;
+
+    // =====================================================================
+    // 档位热切换（【一】核心）
+    // =====================================================================
+
+    /**
+     * 把一档参数铺到热路径上。任何切档来源（指令/界面）最终都走这里。
+     * 同时重置运行期动态值，避免上一个档的残留影响新模式。
+     */
+    public static void applyProfile(VeloxConfig.Profile p, String mode) {
+        boolean isVanilla = "vanilla".equals(mode);
+        vanillaMode = isVanilla;
+        tickHeartbeat = !isVanilla;
+
+        // tick：v1.1 起永久禁用（玩法安全），无论档位一律 false。
+        tickGoalSelectorEmpty = false;
+        tickGoalSelectorIdle = false;
+        tickMobAiThrottle = false;
+        tickMobAiThrottleDistSq = 0;
+        tickMobAiThrottleInterval = 0;
+
+        // render
+        beCullEnabled = p.renderBlockEntityDistance > 0;
+        beCullDistSq = sq(p.renderBlockEntityDistance);
         beCullBaseSq = beCullDistSq;
-
-        entityCullEnabled = c.renderEntityDistance > 0.0D;
-        entityCullDistSq = sq(c.renderEntityDistance);
+        entityCullEnabled = p.renderEntityDistance > 0;
+        entityCullDistSq = sq(p.renderEntityDistance);
         entityCullBaseSq = entityCullDistSq;
-
-        itemCullEnabled = c.renderItemDistance > 0.0D;
-        itemCullDistSq = sq(c.renderItemDistance);
+        itemCullEnabled = p.renderItemDistance > 0;
+        itemCullDistSq = sq(p.renderItemDistance);
         itemCullBaseSq = itemCullDistSq;
-
-        xpCullEnabled = c.renderExperienceOrbDistance > 0.0D;
-        xpCullDistSq = sq(c.renderExperienceOrbDistance);
+        xpCullEnabled = p.renderExperienceOrbDistance > 0;
+        xpCullDistSq = sq(p.renderExperienceOrbDistance);
         xpCullBaseSq = xpCullDistSq;
+        particleLimiterEnabled = p.renderParticleBudget > 0;
+        particleBudget = p.renderParticleBudget;
+        effectiveParticleBudget = p.renderParticleBudget;
 
-        particleLimiterEnabled = c.renderParticleBudget > 0;
-        particleBudget = c.renderParticleBudget;
-        effectiveParticleBudget = particleBudget;
-
-        fpsGovernor = c.stabilityFpsGovernor;
-        targetFps = Math.max(10, c.stabilityTargetFps);
-        adaptiveParticles = c.stabilityAdaptiveParticles;
-        logStutters = c.stabilityLogStutters;
-        stutterMs = Math.max(8, c.stabilityStutterMs);
-
-        adaptiveCulling = c.stabilityAdaptiveCulling;
-        minCullDistSq = sq(Math.max(8.0D, c.stabilityMinCullDistance));
-        adaptInterval = Math.max(1, c.stabilityAdaptInterval);
+        // stability
+        fpsGovernor = p.stabilityFpsGovernor;
+        targetFps = Math.max(30, VeloxConfig.INSTANCE.targetFps);
+        adaptiveParticles = p.stabilityAdaptiveParticles;
+        adaptiveCulling = p.stabilityAdaptiveCulling;
+        minCullDistSq = sq(8.0);
+        adaptInterval = Math.max(1, p.stabilityAdaptInterval);
         adaptCountdown = 0;
 
-        collectStats = c.collectStats;
+        // 诊断
+        collectStats = p.collectStats;
     }
 
     private static double sq(double v) {
         return v * v;
     }
 
-    // ------------------------------------------------------------------
-    // Frame clock
-    //
-    // Everything that only needs to happen once per frame hangs off this counter:
-    // the particle budget reset and the camera refresh. It is advanced from
-    // ParticleEngine#tick(), which the client calls exactly once per frame before
-    // particles are updated and drawn.
-    //
-    // The counter is a plain int on purpose. Nothing here needs to be exact - if a
-    // frame is missed the next one simply carries on from the new number.
-    // ------------------------------------------------------------------
+    // =====================================================================
+    // 帧时钟 + 粒子预算（每帧由 ParticleEngineTickMixin 调 onFrame）
+    // =====================================================================
 
-    private static int frameId;
+    public static volatile int frameId;
 
-    /** Advance the frame clock and reset everything that is budgeted per frame. */
+    /** 推进一帧：递增帧号、重置粒子预算计数、驱动自适应剔除倒计时。 */
     public static void onFrame() {
+        if (!tickHeartbeat) {
+            return;
+        }
         frameId++;
-        particlesThisFrame = 0;
+        particleCounter = 0;
     }
 
-    /**
-     * Spend one unit of the per-frame particle budget.
-     *
-     * @return {@code true} if the particle may spawn, {@code false} if the budget is spent
-     */
+    private static int particleCounter;
+
+    /** 尝试消费一个粒子名额。返回 false 表示这一帧预算已满，调用方应丢弃该粒子。 */
     public static boolean tryConsumeParticleBudget() {
-        if (frameId != particleResetFrame) {
-            // Normal case: a new frame has started since the last call.
-            particleResetFrame = frameId;
-            particlesThisFrame = 0;
-            particleCallsSinceReset = 0;
-        } else if (++particleCallsSinceReset >= PARTICLE_FALLBACK_WINDOW) {
-            // No heartbeat has arrived for a long time. The budget must never latch shut, so
-            // fall back to counting calls. The limiter becomes looser, but it keeps working.
-            particlesThisFrame = 0;
-            particleCallsSinceReset = 0;
+        int cap = effectiveParticleBudget;
+        if (cap <= 0) {
+            return true;
         }
-
-        if (effectiveParticleBudget <= 0) {
-            return true; // limiter off
-        }
-        if (particlesThisFrame >= effectiveParticleBudget) {
-            return false;
-        }
-        particlesThisFrame++;
-        return true;
+        return particleCounter++ < cap;
     }
 
-    // ------------------------------------------------------------------
-    // Adaptive culling (original)
-    //
-    // The stabilizer passes its smoothed FPS in here when it sits below target. We then
-    // tighten the live *CullDistSq fields - the render mixins read those exact fields every
-    // frame, so more entities/block-entities/items fall outside the (shorter) radius and are
-    // skipped. That is the same "shed load when slow" idea Sodium uses, but driven by our own
-    // governor and with no reload. Distances relax back to their configured base once FPS
-    // recovers, so a healthy scene is never permanently starved.
-    //
-    // Two changes in 1.0-release, both about smoothness rather than aggression:
-    //   1. the radius is reconsidered every `adaptInterval` frames instead of every frame.
-    //      Per-frame tweaks made it oscillate around the point where the frame time crossed
-    //      the target, and an oscillating radius is visible as objects popping in and out
-    //      at the edge of the cull. Widening the interval removes the visible flicker and
-    //      costs a handful of multiplications less per frame.
-    //   2. when the frame rate is healthy and every radius has already relaxed to its
-    //      configured base, there is nothing left to compute, so the call returns at once.
-    //      That is the common case on a machine that is not struggling.
-    // ------------------------------------------------------------------
+    // =====================================================================
+    // 自适应剔除（FPS 稳定器用，仅非 auto 档；auto 档交给 VeloxAutoTuner）
+    // =====================================================================
 
     /**
-     * @param avgFps  smoothed frames-per-second reported by the stabilizer
-     * @param target  desired FPS from {@code stability.target_fps}
+     * 根据当前 FPS 在基准与下限之间插值收紧/放宽剔除距离。仅 FPS 稳定器（非 auto 档）
+     * 调用；auto 档交给 VeloxAutoTuner。
      */
-    public static void adaptCulling(double avgFps, double target) {
-        if (!adaptiveCulling || avgFps <= 0.0D || target <= 0.0D) {
+    public static void adaptCulling(double fps, double target) {
+        if (!adaptiveCulling || !fpsGovernor) {
             return;
         }
-
-        if (--adaptCountdown > 0) {
-            return;
-        }
-        adaptCountdown = adaptInterval;
-
-        boolean healthy = avgFps >= target * 0.9D;
-        if (healthy
-                && (!entityCullEnabled || entityCullDistSq >= entityCullBaseSq)
-                && (!beCullEnabled || beCullDistSq >= beCullBaseSq)
-                && (!itemCullEnabled || itemCullDistSq >= itemCullBaseSq)
-                && (!xpCullEnabled || xpCullDistSq >= xpCullBaseSq)) {
-            return; // nothing to do, and nothing worth computing
-        }
-
-        double lo = minCullDistSq;
-
-        if (entityCullEnabled) {
-            entityCullDistSq = step(entityCullDistSq, entityCullBaseSq, lo, healthy);
-        }
-        if (beCullEnabled) {
-            beCullDistSq = step(beCullDistSq, beCullBaseSq, lo, healthy);
-        }
-        if (itemCullEnabled) {
-            itemCullDistSq = step(itemCullDistSq, itemCullBaseSq, lo, healthy);
-        }
-        if (xpCullEnabled) {
-            xpCullDistSq = step(xpCullDistSq, xpCullBaseSq, lo, healthy);
+        if (fps >= target * 1.05) {
+            // 流畅：从当前值往基准放宽 10%
+            beCullDistSq = Math.min(beCullBaseSq, beCullDistSq * 1.1);
+            entityCullDistSq = Math.min(entityCullBaseSq, entityCullDistSq * 1.1);
+            itemCullDistSq = Math.min(itemCullBaseSq, itemCullDistSq * 1.1);
+            xpCullDistSq = Math.min(xpCullBaseSq, xpCullDistSq * 1.1);
+        } else if (fps <= target * 0.9) {
+            // 卡顿：向下限收缩 10%
+            beCullDistSq = Math.max(minCullDistSq, beCullDistSq * 0.9);
+            entityCullDistSq = Math.max(minCullDistSq, entityCullDistSq * 0.9);
+            itemCullDistSq = Math.max(minCullDistSq, itemCullDistSq * 0.9);
+            xpCullDistSq = Math.max(minCullDistSq, xpCullDistSq * 0.9);
         }
     }
 
-    /**
-     * One relaxation or tightening step.
-     *
-     * <p>Shrinking is multiplicative so it reacts proportionally at any radius; growing is
-     * additive (with a small floor) so a fully collapsed radius climbs back instead of
-     * crawling up from near zero.</p>
-     */
-    private static double step(double current, double base, double lo, boolean healthy) {
-        return healthy
-                ? Math.min(base, current + (base - lo) * 0.05D + 1.0D)
-                : Math.max(lo, current * 0.85D);
-    }
-
-    /** Human-readable snapshot of the live cull distances, for diagnostics. */
+    /** 给稳定器报告用的剔除状态快照。 */
     public static String cullingSnapshot() {
-        return (entityCullEnabled ? Math.round(Math.sqrt(entityCullDistSq)) : 0) + "/"
-                + (beCullEnabled ? Math.round(Math.sqrt(beCullDistSq)) : 0) + "/"
-                + (itemCullEnabled ? Math.round(Math.sqrt(itemCullDistSq)) : 0) + "/"
-                + (xpCullEnabled ? Math.round(Math.sqrt(xpCullDistSq)) : 0);
+        return String.format("%.0f/%.0f/%.0f/%.0f (sq)",
+                Math.sqrt(beCullDistSq), Math.sqrt(entityCullDistSq),
+                Math.sqrt(itemCullDistSq), Math.sqrt(xpCullDistSq));
     }
 
-    // ------------------------------------------------------------------
-    // Camera cache
-    //
-    // The camera does not move between two consecutive culling checks inside the same
-    // frame, so re-reading it for every block entity is pure waste. In 1.0.2 the cache
-    // was refreshed every 64 calls, which in a base with a few thousand block entities
-    // still meant dozens of lookups per frame. It is now refreshed once per frame.
-    // ------------------------------------------------------------------
+    // =====================================================================
+    // Auto 档运行期缩放（VeloxAutoTuner 调用；按比例围绕档位基准，不跨档跳变）
+    // =====================================================================
 
-    /**
-     * Fallback interval, used only if the per-frame heartbeat never fires (which would mean
-     * the ParticleEngine mixin did not apply). It restores the 1.0.2 behaviour rather than
-     * leaving the camera frozen for the whole session.
-     */
-    private static final int CAM_FALLBACK_INTERVAL = 64;
+    /** 按倍率缩放当前剔除距离（围绕档位基准，不跨档跳变）。 */
+    public static void scaleCullDistances(double factor) {
+        if (factor <= 0) {
+            return;
+        }
+        double be = Math.max(4.0, Math.sqrt(beCullBaseSq) * factor);
+        double en = Math.max(8.0, Math.sqrt(entityCullBaseSq) * factor);
+        double it = Math.max(4.0, Math.sqrt(itemCullBaseSq) * factor);
+        double xp = Math.max(4.0, Math.sqrt(xpCullBaseSq) * factor);
+        beCullDistSq = be * be;
+        entityCullDistSq = en * en;
+        itemCullDistSq = it * it;
+        xpCullDistSq = xp * xp;
+        beCullEnabled = beCullBaseSq > 0;
+        entityCullEnabled = entityCullBaseSq > 0;
+        itemCullEnabled = itemCullBaseSq > 0;
+        xpCullEnabled = xpCullBaseSq > 0;
+    }
 
-    private static double camX;
-    private static double camY;
-    private static double camZ;
+    /** 恢复当前档位的原始距离（Auto 收紧后放宽用）。 */
+    public static void resetCullDistances() {
+        beCullDistSq = beCullBaseSq;
+        entityCullDistSq = entityCullBaseSq;
+        itemCullDistSq = itemCullBaseSq;
+        xpCullDistSq = xpCullBaseSq;
+    }
+
+    /** Auto 档运行期调整实时粒子上限（围绕档位预算，不跨档）。 */
+    public static void setEffectiveParticleBudget(int budget) {
+        if (budget <= 0) {
+            return;
+        }
+        effectiveParticleBudget = Math.min(particleBudget, Math.max((int) (particleBudget * 0.25), budget));
+    }
+
+    /** 恢复档位原始粒子预算。 */
+    public static void resetParticleBudget() {
+        effectiveParticleBudget = particleBudget;
+    }
+
+    // =====================================================================
+    // 摄像机缓存（剔除用）：新帧开始时刷新一次，剔除路径只读
+    // =====================================================================
+
+    private static double camX, camY, camZ;
     private static boolean camValid;
 
     private static int camFrame = -1;
     private static int camFallbackCountdown;
+    private static final int CAM_FALLBACK_INTERVAL = 128;
 
-    /** Latched once the camera lookup fails, so we never throw a second time. */
+    /** 一旦摄像机查询失败就闩上，绝不抛第二次。 */
     private static volatile boolean camBroken;
 
-    public static double camX() {
-        return camX;
-    }
-
-    public static double camY() {
-        return camY;
-    }
-
-    public static double camZ() {
-        return camZ;
-    }
-
-    public static boolean isCamValid() {
-        return camValid;
-    }
+    public static double camX() { return camX; }
+    public static double camY() { return camY; }
+    public static double camZ() { return camZ; }
+    public static boolean isCamValid() { return camValid; }
 
     /**
-     * Refresh the cached camera position when a new frame has started.
-     *
-     * <p>Cheap enough to call on every culling check: it is a single int comparison on every
-     * call after the first one in a frame.</p>
+     * 新帧开始时刷新缓存的摄像机坐标。
+     * 对剔除检查来说足够便宜：一帧内只有第一次调用会真的去读，其余全是 int 比较。
      */
     public static void tickCamera() {
         if (camBroken) {
             camValid = false;
             return;
         }
-
-        boolean newFrame = camFrame != frameId;
-        if (!newFrame && --camFallbackCountdown > 0) {
+        if (camFrame == frameId && --camFallbackCountdown > 0) {
             return;
         }
-
-        if (newFrame) {
+        if (camFrame != frameId) {
             camFrame = frameId;
         }
-        // Always re-armed, so a session without the frame heartbeat degrades to the old
-        // every-N-calls schedule instead of never refreshing at all.
         camFallbackCountdown = CAM_FALLBACK_INTERVAL;
 
         try {
@@ -360,22 +302,10 @@ public final class VeloxFast {
             camZ = camera.getZ();
             camValid = true;
         } catch (Throwable t) {
-            // Almost always an unremapped jar: the class name we compiled against does
-            // not exist at runtime. Latch it off rather than throwing every frame.
+            // 几乎必然是未 remap 的 jar：编译期用的类名运行期不存在。闩掉而不是每帧抛。
             camBroken = true;
             camValid = false;
-            Velox.LOGGER.error("[Velox] Camera lookup failed - disabling distance culling. "
-                    + "If the log also shows '@Mixin target ... was not found', your jar was never "
-                    + "remapped: build it with ./gradlew build instead of using the preview jar.", t);
+            Velox.LOGGER.error("[Velox] 摄像机查询失败 - 关闭距离剔除。请把 mcdev 映射切到 mojmap 后重编译。", t);
         }
-    }
-
-    /**
-     * Force a refresh on the next call. Used by the once-per-frame hook so the camera is
-     * current before a render pass starts.
-     */
-    public static void invalidateCamera() {
-        camFrame = -1;
-        camFallbackCountdown = 0;
     }
 }

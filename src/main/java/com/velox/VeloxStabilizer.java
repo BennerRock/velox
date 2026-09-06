@@ -26,8 +26,11 @@ public final class VeloxStabilizer {
     private static long lastNanos;
     /** Set true on the first real frame; lets us report whether the hook actually fired. */
     private static boolean injected;
-    /** Smoothed FPS (exponential moving average of the instantaneous rate). */
-    private static double emaFps;
+    /** Smoothed FPS (exponential moving average of the instantaneous rate). Public for AutoTuner. */
+    public static double emaFps;
+
+    /** 自适应剔除的帧计数，用于节流（非 auto 档）。 */
+    private static int cullTick;
 
     // stutter accounting
     private static int stutterCount;
@@ -95,7 +98,9 @@ public final class VeloxStabilizer {
                 if (adaptiveParticles && VeloxFast.particleLimiterEnabled) {
                     adaptParticles();
                 }
-                if (adaptiveCulling) {
+                // 自适应剔除只在非 auto 档生效（auto 档交给 VeloxAutoTuner），并按 adaptInterval 节流。
+                if (adaptiveCulling && !"auto".equals(VeloxConfig.INSTANCE.mode)
+                        && (++cullTick % Math.max(1, VeloxFast.adaptInterval) == 0)) {
                     VeloxFast.adaptCulling(emaFps, targetFps);
                 }
             }

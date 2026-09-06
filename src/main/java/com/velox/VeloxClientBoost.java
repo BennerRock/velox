@@ -4,6 +4,8 @@ import net.minecraft.client.Minecraft;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Applies aggressive graphics settings once, as soon as the client is ready.
@@ -34,6 +36,8 @@ public final class VeloxClientBoost {
 
     private static boolean applied;
     private static boolean failed;
+    /** 记录 boost 改过的原版项及其改前值，用于切 vanilla 时恢复。 */
+    private static final Map<String, Object> recorded = new HashMap<>();
 
     private VeloxClientBoost() {
     }
@@ -49,6 +53,7 @@ public final class VeloxClientBoost {
         }
 
         try {
+            VeloxFollow.setSuppressed(true);
             applyInner();
             applied = true;
         } catch (Throwable t) {
@@ -56,6 +61,8 @@ public final class VeloxClientBoost {
             Velox.LOGGER.error("[Velox] Graphics boost skipped - Minecraft classes unavailable. "
                     + "This normally means the jar was not remapped (see the 'not found' warnings "
                     + "from Mixin above). Build with ./gradlew build.", t);
+        } finally {
+            VeloxFollow.setSuppressed(false);
         }
     }
 
@@ -70,22 +77,22 @@ public final class VeloxClientBoost {
         Object options = mc.options;
         int count = 0;
 
-        if (VeloxConfig.INSTANCE.boostGraphicsMode) {
+        if (VeloxConfig.INSTANCE.current().boostGraphicsMode) {
             count += setEnum(options, new String[]{"graphicsMode", "graphics"},
                     new String[]{"FAST", "GraphicsStatus.FAST"});
         }
-        if (VeloxConfig.INSTANCE.boostDisableClouds) {
+        if (VeloxConfig.INSTANCE.current().boostDisableClouds) {
             count += setEnum(options, new String[]{"cloudStatus", "clouds"},
                     new String[]{"OFF", "CloudStatus.OFF"});
         }
-        if (VeloxConfig.INSTANCE.boostDisableEntityShadows) {
+        if (VeloxConfig.INSTANCE.current().boostDisableEntityShadows) {
             count += setBoolean(options, new String[]{"entityShadows", "entityShadow"}, false);
         }
-        if (VeloxConfig.INSTANCE.boostMinimalParticles) {
+        if (VeloxConfig.INSTANCE.current().boostMinimalParticles) {
             count += setEnum(options, new String[]{"particles", "particlesStatus"},
                     new String[]{"MINIMAL", "ParticlesStatus.MINIMAL"});
         }
-        if (VeloxConfig.INSTANCE.boostFastAmbientOcclusion) {
+        if (VeloxConfig.INSTANCE.current().boostFastAmbientOcclusion) {
             count += setEnum(options, new String[]{"ambientOcclusion", "ao"},
                     new String[]{"MIN", "OFF"});
         }
@@ -130,6 +137,7 @@ public final class VeloxClientBoost {
                         return 0; // already set
                     }
                     if (tryInvoke(holder, "set", target) != null) {
+                        recorded.putIfAbsent(fieldName, current);
                         Velox.LOGGER.info("[Velox]   {} -> {}", fieldName, wanted);
                         return 1;
                     }
@@ -161,6 +169,7 @@ public final class VeloxClientBoost {
                         return 0;
                     }
                     if (tryInvoke(holder, "set", value) != null) {
+                        recorded.putIfAbsent(fieldName, current);
                         Velox.LOGGER.info("[Velox]   {} -> {}", fieldName, value);
                         return 1;
                     }
@@ -204,6 +213,47 @@ public final class VeloxClientBoost {
             // handled by the caller
         }
         return null;
+    }
+
+    /** 切到 vanilla 档时调用：把 boost 改过的图形项恢复为改前值，并允许日后重新 boost。 */
+    public static void restoreBoostedOptions() {
+        if (recorded.isEmpty()) {
+            applied = false;
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.options == null) {
+            return;
+        }
+        VeloxFollow.setSuppressed(true);
+        try {
+            Object options = mc.options;
+            for (Map.Entry<String, Object> e : recorded.entrySet()) {
+                setOptionValue(options, e.getKey(), e.getValue());
+            }
+        } finally {
+            VeloxFollow.setSuppressed(false);
+        }
+        recorded.clear();
+        applied = false;
+    }
+
+    private static void setOptionValue(Object options, String fieldName, Object value) {
+        Field f = findField(options.getClass(), fieldName);
+        if (f == null) {
+            return;
+        }
+        try {
+            Object holder = f.get(options);
+            if (holder == null) {
+                return;
+            }
+            if (tryInvoke(holder, "set", value) != null) {
+                Velox.LOGGER.info("[Velox]   恢复 {} -> {}", fieldName, value);
+            }
+        } catch (Throwable t) {
+            Velox.LOGGER.debug("[Velox] 恢复失败 {}: {}", fieldName, t);
+        }
     }
 
     /** Resolve an enum constant by simple name or by "Type.NAME" form. */
