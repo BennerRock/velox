@@ -1,4 +1,4 @@
-# Velox — 一个代替多个的 Fabric 优化模组（Minecraft 1.21.11）v1.0-release
+# Velox — 一个代替多个的优化模组（Minecraft 1.21.11）v1.0-release
 
 **Velox = Lithium（里和纳，逻辑）+ Sodium（钠，渲染）+ Sodium Extra（钠扩展版，额外选项）合为一体，外加原创优化。**
 装上 Velox，**不要再装 Lithium / Sodium / Sodium Extra**——Velox 已经把它们的等效优化整合进同一个模组，装重复的只会互相覆盖、谁先谁后不确定，反而可能负优化。
