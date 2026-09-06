@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 # Velox
-=======
-# Velox — 一个代替多个的优化模组（Minecraft 1.21.11）v1.0-release
->>>>>>> b0e0c03baccd538c44d6257fee1e340ecc486363
 
 > Minecraft 1.21.11（Fabric）纯客户端优化模组。版本：`1.1-beta1`。
 
