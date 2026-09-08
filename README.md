@@ -1,6 +1,6 @@
 # Velox
 
-> Minecraft 1.21.11（Fabric）纯客户端优化模组。版本：`1.1-beta1`。
+> Minecraft 1.21.11（Fabric）纯客户端优化模组。版本：`1.1-beta4`。
 
 Velox 只做一件事：**在不改变任何原版玩法的前提下，降低同一份行为所花的代价**。
 
@@ -90,7 +90,7 @@ Velox 会监听你在原版视频设置里的手动改动：
 ```bash
 cd Project
 ./gradlew build
-# 产物：Project/build/libs/velox-1.1-beta1.jar
+# 产物：Project/build/libs/velox-1.1-beta4.jar
 ```
 
 ## 协议
