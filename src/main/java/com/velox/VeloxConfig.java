@@ -177,12 +177,13 @@ public final class VeloxConfig {
         vanilla.collectStats = false;
 
         // ---------------- Safe ----------------
-        safe.renderBlockEntityDistance = 32;
-        safe.renderEntityDistance = 64;
-        safe.renderItemDistance = 16;
-        safe.renderExperienceOrbDistance = 24;
+        // 视觉优先：距离放宽到几乎看不出差别，只剔除真正远到看不清的实体。
+        safe.renderBlockEntityDistance = 48;
+        safe.renderEntityDistance = 96;
+        safe.renderItemDistance = 48;
+        safe.renderExperienceOrbDistance = 48;
         safe.renderParticleBudget = 4000;
-        safe.entityRenderBudget = 600;
+        safe.entityRenderBudget = 0;
         safe.stabilityFpsGovernor = true;
         safe.stabilityAdaptiveParticles = true;
         safe.stabilityAdaptiveCulling = false;
@@ -191,20 +192,22 @@ public final class VeloxConfig {
         safe.stabilityStutterMs = 200;
         safe.memoryWatchdog = true;
         safe.memoryWatchdogIntervalSeconds = 60;
-        safe.boostGraphicsMode = true;
-        safe.boostDisableClouds = true;
-        safe.boostDisableEntityShadows = true;
-        safe.boostMinimalParticles = true;
-        safe.boostFastAmbientOcclusion = true;
+        // 视觉优先：默认不改玩家的原版画质设置（粒子/云/阴影/平滑光照/画质）。
+        // boost 机制保留（可按需要改配置开启），但不再默认改变可见画面。
+        safe.boostGraphicsMode = false;
+        safe.boostDisableClouds = false;
+        safe.boostDisableEntityShadows = false;
+        safe.boostMinimalParticles = false;
+        safe.boostFastAmbientOcclusion = false;
         safe.collectStats = false;
 
         // ---------------- Eco：偏向省内存省电 ----------------
-        eco.renderBlockEntityDistance = 24;
-        eco.renderEntityDistance = 48;
-        eco.renderItemDistance = 12;
-        eco.renderExperienceOrbDistance = 16;
+        eco.renderBlockEntityDistance = 32;
+        eco.renderEntityDistance = 64;
+        eco.renderItemDistance = 32;
+        eco.renderExperienceOrbDistance = 32;
         eco.renderParticleBudget = 2000;
-        eco.entityRenderBudget = 200;
+        eco.entityRenderBudget = 0;
         eco.stabilityFpsGovernor = true;
         eco.stabilityAdaptiveParticles = true;
         eco.stabilityAdaptiveCulling = true;
@@ -213,20 +216,20 @@ public final class VeloxConfig {
         eco.stabilityStutterMs = 200;
         eco.memoryWatchdog = true;
         eco.memoryWatchdogIntervalSeconds = 30;
-        eco.boostGraphicsMode = true;
-        eco.boostDisableClouds = true;
-        eco.boostDisableEntityShadows = true;
-        eco.boostMinimalParticles = true;
-        eco.boostFastAmbientOcclusion = true;
+        eco.boostGraphicsMode = false;
+        eco.boostDisableClouds = false;
+        eco.boostDisableEntityShadows = false;
+        eco.boostMinimalParticles = false;
+        eco.boostFastAmbientOcclusion = false;
         eco.collectStats = false;
 
         // ---------------- Aggressive：能开的全开、距离拉满 ----------------
-        aggressive.renderBlockEntityDistance = 48;
+        aggressive.renderBlockEntityDistance = 64;
         aggressive.renderEntityDistance = 128;
-        aggressive.renderItemDistance = 32;
-        aggressive.renderExperienceOrbDistance = 48;
+        aggressive.renderItemDistance = 64;
+        aggressive.renderExperienceOrbDistance = 64;
         aggressive.renderParticleBudget = 8000;
-        aggressive.entityRenderBudget = 500;
+        aggressive.entityRenderBudget = 0;
         aggressive.stabilityFpsGovernor = true;
         aggressive.stabilityAdaptiveParticles = true;
         aggressive.stabilityAdaptiveCulling = true;
@@ -235,20 +238,20 @@ public final class VeloxConfig {
         aggressive.stabilityStutterMs = 200;
         aggressive.memoryWatchdog = true;
         aggressive.memoryWatchdogIntervalSeconds = 15;
-        aggressive.boostGraphicsMode = true;
-        aggressive.boostDisableClouds = true;
-        aggressive.boostDisableEntityShadows = true;
-        aggressive.boostMinimalParticles = true;
-        aggressive.boostFastAmbientOcclusion = true;
+        aggressive.boostGraphicsMode = false;
+        aggressive.boostDisableClouds = false;
+        aggressive.boostDisableEntityShadows = false;
+        aggressive.boostMinimalParticles = false;
+        aggressive.boostFastAmbientOcclusion = false;
         aggressive.collectStats = false;
 
         // ---------------- Auto：以 Safe 为基准起步，运行期由 VeloxAutoTuner 动态调整 ----------------
-        auto.renderBlockEntityDistance = 32;
-        auto.renderEntityDistance = 64;
-        auto.renderItemDistance = 16;
-        auto.renderExperienceOrbDistance = 24;
+        auto.renderBlockEntityDistance = 48;
+        auto.renderEntityDistance = 96;
+        auto.renderItemDistance = 48;
+        auto.renderExperienceOrbDistance = 48;
         auto.renderParticleBudget = 4000;
-        auto.entityRenderBudget = 300;
+        auto.entityRenderBudget = 0;
         auto.stabilityFpsGovernor = true;
         auto.stabilityAdaptiveParticles = true;
         auto.stabilityAdaptiveCulling = false; // 动态开关由 AutoTuner 控制
@@ -257,11 +260,11 @@ public final class VeloxConfig {
         auto.stabilityStutterMs = 200;
         auto.memoryWatchdog = true;
         auto.memoryWatchdogIntervalSeconds = 60;
-        auto.boostGraphicsMode = true;
-        auto.boostDisableClouds = true;
-        auto.boostDisableEntityShadows = true;
-        auto.boostMinimalParticles = true;
-        auto.boostFastAmbientOcclusion = true;
+        auto.boostGraphicsMode = false;
+        auto.boostDisableClouds = false;
+        auto.boostDisableEntityShadows = false;
+        auto.boostMinimalParticles = false;
+        auto.boostFastAmbientOcclusion = false;
         auto.collectStats = false;
 
         return new Profile[]{auto, safe, eco, aggressive, vanilla};

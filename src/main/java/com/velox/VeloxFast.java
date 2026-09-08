@@ -69,10 +69,17 @@ public final class VeloxFast {
     public static volatile boolean particleLimiterEnabled;
     public static volatile int particleBudget;
 
-    /** 实体优化：每帧实体渲染数量上限（0 = 不限制）。 */
+    /** 实体优化：每帧实体渲染数量上限（0 = 不限制，当前五档默认关闭）。 */
     public static volatile int entityRenderBudget;
-    /** 本帧已渲染的实体数，每帧由 beginFrame() 重置。 */
-    private static volatile int entityRendered;
+    /**
+     * 本帧已渲染的实体数，每帧由 beginFrame() 重置。
+     *
+     * <p>刻意<strong>不用 volatile</strong>：计数只在渲染线程内读写，而 volatile 的自增会
+     * 带来内存屏障与缓存一致性流量。它位于「每个实体每帧」的热路径上，加 volatile 的代价
+     * 会超过剔除省下的开销。可见性由单线程渲染保证。</p>
+     */
+    private static int entityRendered;
+
     /**
      * FPS 稳定器/Auto 档在运行期调的实时粒子上限，初始等于 particleBudget。
      * 限制器读的是它而不是静态配置值，这样运行期调整不需要 reload。

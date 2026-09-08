@@ -45,12 +45,12 @@ public class VeloxConfigScreen extends Screen {
         int cx = this.width / 2;
 
         this.modeButton = Button.builder(Component.literal(modeLabel()), btn -> cycleModeSafe())
-                .bounds(cx - 100, 36, 200, 20)
+                .bounds(cx - 100, 48, 200, 20)
                 .build();
         this.addRenderableWidget(this.modeButton);
 
         this.addRenderableWidget(Button.builder(Component.literal("恢复跟随档位"), btn -> resetFollowSafe())
-                .bounds(cx - 100, 62, 200, 20)
+                .bounds(cx - 100, 74, 200, 20)
                 .build());
 
         this.addRenderableWidget(Button.builder(Component.literal("完成"), btn -> this.onClose())
@@ -68,9 +68,6 @@ public class VeloxConfigScreen extends Screen {
             int idx = VeloxConfig.INSTANCE.modeIndex();
             String next = VeloxConfig.MODES[(idx + 1) % VeloxConfig.MODES.length];
             boolean changed = VeloxConfig.INSTANCE.setProfile(next);
-            if (this.modeButton != null) {
-                this.modeButton.setMessage(Component.literal(modeLabel()));
-            }
             notice = changed
                     ? "已切换到 " + next + "（" + VeloxConfig.INSTANCE.modeNameZh() + "），立即生效。"
                     : "当前已是 " + next + "，无需切换。";
@@ -78,6 +75,13 @@ public class VeloxConfigScreen extends Screen {
         } catch (Throwable t) {
             notice = "切换失败：" + t;
             Velox.LOGGER.error("[Velox] 界面切换档位失败", t);
+        } finally {
+            // 无论切档链路是否异常，按钮文字都按 INSTANCE 的真实档位刷新。
+            // setProfile 是「先改 mode，再 applyProfile」，异常时档位其实已经变了；
+            // 少了这一步就会出现「要退出界面再进来才显示新档位」。
+            if (this.modeButton != null) {
+                this.modeButton.setMessage(Component.literal(modeLabel()));
+            }
         }
     }
 
@@ -103,8 +107,10 @@ public class VeloxConfigScreen extends Screen {
     @Override
     public void render(GuiGraphics gui, int mouseX, int mouseY, float partialTick) {
         gui.drawCenteredString(this.font, this.title, this.width / 2, 14, 0xFFFFFF);
+        // 实时显示当前档位：每次渲染都重读一次，指令切档后界面同样立即同步。
+        gui.drawCenteredString(this.font, Component.literal(modeLabel()), this.width / 2, 30, 0xAAAAAA);
 
-        int y = 92;
+        int y = 104;
 
         // 实体优化状态
         VeloxConfig.Profile p = VeloxConfig.INSTANCE.current();

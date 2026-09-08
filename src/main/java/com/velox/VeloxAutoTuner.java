@@ -21,11 +21,11 @@ public final class VeloxAutoTuner {
     // 滞回：连续 N 个采样窗口满足条件才切换方向，避免反复横跳。
     private static int lowStreak;
     private static int highStreak;
-    private static final int STREAK_LOW = 6;   // 约 3 秒（窗口 500ms）持续卡顿才收紧
+    private static final int STREAK_LOW = 10;  // 约 5 秒持续卡顿才收紧（避免抖动与视觉突变）
     private static final int STREAK_HIGH = 12; // 约 6 秒持续流畅才放宽
 
     private static final double FACTOR_STEP = 0.9;     // 每步收紧/放宽比例
-    private static final double FACTOR_MIN = 0.4;       // 下限（不低于档位基准的 40%）
+    private static final double FACTOR_MIN = 0.7;       // 下限（不低于档位基准的 70%，视觉几乎无感）
     private static final double FACTOR_MAX = 1.0;       // 不超过档位基准
     private static double factor = 1.0;
 

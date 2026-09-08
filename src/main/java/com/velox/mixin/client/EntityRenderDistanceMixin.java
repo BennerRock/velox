@@ -50,6 +50,12 @@ public abstract class EntityRenderDistanceMixin {
     private static final Class<?> ITEM_CLASS = resolveItemClass();
     private static final Class<?> XP_CLASS = resolveXpClass();
 
+    /**
+     * 预算用尽时仍保留的近距离比例（按距离平方计）。
+     * 0.25 表示保留约「一半剔除半径」以内的实体：平方距离小于 0.25 倍上限的实体不会被预算剔除。
+     */
+    private static final double NEAR_KEEP_RATIO = 0.25D;
+
     private static Class<?> resolveItemClass() {
         try {
             return ItemEntity.class;
@@ -80,6 +86,12 @@ public abstract class EntityRenderDistanceMixin {
             double camZ,
             CallbackInfoReturnable<Boolean> cir
     ) {
+        // vanilla 档（全部优化关闭）：一次 volatile 读即可退出，
+        // 省掉后面多次字段读取与类型判断。此时行为与不注入完全一致。
+        if (VeloxFast.vanillaMode) {
+            return;
+        }
+
         // 经验球优先：它是最窄的一类，刷怪场正是最需要它的场景。
         boolean isXp = VeloxFast.xpCullEnabled && isXpEntity(entity);
         boolean isItem = !isXp && VeloxFast.itemCullEnabled && isItemEntity(entity);
@@ -107,9 +119,11 @@ public abstract class EntityRenderDistanceMixin {
             }
         }
 
-        // 实体优化：距离合格的实体，若本帧渲染预算已满则跳过（先到先得，近处先渲染）。
+        // 实体优化：本帧渲染预算已满时，只跳过较远的实体；近处实体一律保留。
+        // 纯按「先到先得」剔除会让玩家眼前的实体随机消失，既难看也可能影响交互，
+        // 因此这里保留约一半剔除半径内的实体，只让远处实体让位。
         if (!culled && !VeloxFast.tryConsumeEntitySlot()) {
-            culled = true;
+            culled = distSq > limitSq * NEAR_KEEP_RATIO;
         }
 
         if (culled) {
