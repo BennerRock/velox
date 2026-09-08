@@ -1,5 +1,6 @@
 package com.velox.mixin.client;
 
+import com.velox.VeloxFast;
 import com.velox.VeloxStabilizer;
 import net.minecraft.client.Minecraft;
 import org.spongepowered.asm.mixin.Mixin;
@@ -24,5 +25,7 @@ public abstract class GameLoopMixin {
     @Inject(method = "tick", at = @At("HEAD"), require = 0)
     private void velox$measureFrame(CallbackInfo ci) {
         VeloxStabilizer.onFrame();
+        // 实体优化：每帧重置实体渲染计数，使预算按帧统计。
+        VeloxFast.beginFrame();
     }
 }

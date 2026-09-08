@@ -68,6 +68,11 @@ public final class VeloxFast {
 
     public static volatile boolean particleLimiterEnabled;
     public static volatile int particleBudget;
+
+    /** 实体优化：每帧实体渲染数量上限（0 = 不限制）。 */
+    public static volatile int entityRenderBudget;
+    /** 本帧已渲染的实体数，每帧由 beginFrame() 重置。 */
+    private static volatile int entityRendered;
     /**
      * FPS 稳定器/Auto 档在运行期调的实时粒子上限，初始等于 particleBudget。
      * 限制器读的是它而不是静态配置值，这样运行期调整不需要 reload。
@@ -128,6 +133,8 @@ public final class VeloxFast {
         particleLimiterEnabled = p.renderParticleBudget > 0;
         particleBudget = p.renderParticleBudget;
         effectiveParticleBudget = p.renderParticleBudget;
+        // 实体优化：每帧渲染数量预算（0 = 不限）。
+        entityRenderBudget = p.entityRenderBudget;
 
         // stability
         fpsGovernor = p.stabilityFpsGovernor;
@@ -159,6 +166,27 @@ public final class VeloxFast {
         }
         frameId++;
         particleCounter = 0;
+    }
+
+    /**
+     * 每帧开始：重置实体渲染计数（实体优化）。
+     * 由 GameLoopMixin 在每帧 tick 前调用，保证预算按帧统计。
+     */
+    public static void beginFrame() {
+        entityRendered = 0;
+    }
+
+    /**
+     * 尝试占用一个本帧实体渲染名额（实体优化）。
+     * 返回 false 表示本帧预算已满，调用方应跳过该实体的渲染。
+     * 预算为 0（不限制）时恒返回 true，等同原版行为。
+     */
+    public static boolean tryConsumeEntitySlot() {
+        int cap = entityRenderBudget;
+        if (cap <= 0) {
+            return true;
+        }
+        return entityRendered++ < cap;
     }
 
     private static int particleCounter;

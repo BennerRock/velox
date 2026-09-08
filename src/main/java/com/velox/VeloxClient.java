@@ -18,6 +18,9 @@ public class VeloxClient implements ClientModInitializer {
         VeloxCommand.register();
         VeloxMultiplayerGuard.register();
 
+        // 进入世界时把配置里分配的全部优化资源用上（剔除/粒子/实体/内存/Auto/boost）。
+        VeloxResources.register();
+
         // 客户端首次 tick 后建立原版设置跟随的映射，之后玩家改设置才会被记录。
         ClientTickEvents.END_CLIENT_TICK.register(client -> VeloxFollow.arm());
 

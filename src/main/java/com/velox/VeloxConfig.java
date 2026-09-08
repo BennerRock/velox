@@ -115,6 +115,12 @@ public final class VeloxConfig {
         public double renderExperienceOrbDistance;
         public int renderParticleBudget;
 
+        /**
+         * 实体优化：每帧实体渲染数量上限（0 = 不限制，等同原版）。
+         * 距离剔除之后仍存活的实体若已超过本帧预算，则跳过其渲染。
+         */
+        public int entityRenderBudget;
+
         // stability
         public boolean stabilityFpsGovernor;
         public boolean stabilityAdaptiveParticles;
@@ -154,6 +160,7 @@ public final class VeloxConfig {
         vanilla.renderItemDistance = 0;
         vanilla.renderExperienceOrbDistance = 0;
         vanilla.renderParticleBudget = 0;
+        vanilla.entityRenderBudget = 0;
         vanilla.stabilityFpsGovernor = false;
         vanilla.stabilityAdaptiveParticles = false;
         vanilla.stabilityAdaptiveCulling = false;
@@ -175,6 +182,7 @@ public final class VeloxConfig {
         safe.renderItemDistance = 16;
         safe.renderExperienceOrbDistance = 24;
         safe.renderParticleBudget = 4000;
+        safe.entityRenderBudget = 600;
         safe.stabilityFpsGovernor = true;
         safe.stabilityAdaptiveParticles = true;
         safe.stabilityAdaptiveCulling = false;
@@ -196,6 +204,7 @@ public final class VeloxConfig {
         eco.renderItemDistance = 12;
         eco.renderExperienceOrbDistance = 16;
         eco.renderParticleBudget = 2000;
+        eco.entityRenderBudget = 200;
         eco.stabilityFpsGovernor = true;
         eco.stabilityAdaptiveParticles = true;
         eco.stabilityAdaptiveCulling = true;
@@ -217,6 +226,7 @@ public final class VeloxConfig {
         aggressive.renderItemDistance = 32;
         aggressive.renderExperienceOrbDistance = 48;
         aggressive.renderParticleBudget = 8000;
+        aggressive.entityRenderBudget = 500;
         aggressive.stabilityFpsGovernor = true;
         aggressive.stabilityAdaptiveParticles = true;
         aggressive.stabilityAdaptiveCulling = true;
@@ -238,6 +248,7 @@ public final class VeloxConfig {
         auto.renderItemDistance = 16;
         auto.renderExperienceOrbDistance = 24;
         auto.renderParticleBudget = 4000;
+        auto.entityRenderBudget = 300;
         auto.stabilityFpsGovernor = true;
         auto.stabilityAdaptiveParticles = true;
         auto.stabilityAdaptiveCulling = false; // 动态开关由 AutoTuner 控制
@@ -395,7 +406,8 @@ public final class VeloxConfig {
         } else {
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
             if (mc != null && mc.options != null) {
-                VeloxClientBoost.apply();
+                // reapply 而非 apply：清掉一次性闩锁，保证从 vanilla 切回来时图形加速真的补上。
+                VeloxClientBoost.reapply();
             }
         }
     }

@@ -66,6 +66,19 @@ public final class VeloxClientBoost {
         }
     }
 
+    /**
+     * 切档后重新应用图形 boost（修复「切到 vanilla 再切回来，图形加速不回来」）。
+     *
+     * <p>apply() 用 applied/failed 做一次性闩锁，首次应用后便永久短路。切档时若直接调
+     * apply()，非 vanilla 档的图形加速不会补回来，玩家会以为按钮点了没效果。这里先清闩
+     * 再重跑，保证每次切档都真正落到原版选项上。</p>
+     */
+    public static void reapply() {
+        applied = false;
+        failed = false;
+        apply();
+    }
+
     private static void applyInner() {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.options == null) {

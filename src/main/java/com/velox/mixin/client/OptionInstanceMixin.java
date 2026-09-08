@@ -16,7 +16,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(OptionInstance.class)
 public abstract class OptionInstanceMixin<T> {
 
-    @Inject(method = {"setValue", "set"}, at = @At("TAIL"), require = 0)
+    // 1.21.11 的 OptionInstance 只有 set(T)，没有 setValue。
+    // 旧写法带上 setValue 会让 Mixin 报「Cannot remap setValue」，这里只保留真实存在的方法。
+    @Inject(method = "set", at = @At("TAIL"), require = 0)
     private void velox$onSet(T value, CallbackInfo ci) {
         VeloxFollow.onOptionChanged((OptionInstance<?>) (Object) this, value);
     }

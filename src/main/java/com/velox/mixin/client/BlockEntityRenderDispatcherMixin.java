@@ -1,76 +1,58 @@
 package com.velox.mixin.client;
 
-import com.mojang.blaze3d.vertex.PoseStack;
 import com.velox.VeloxFast;
 import com.velox.VeloxRuntime;
-import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
+import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
+import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Distance culling for block entity rendering.
+ * 方块实体渲染的距离剔除。
  *
- * <p>Vanilla frustum-culls block entities, but one inside the frustum is dispatched at any
- * distance, and the dispatch itself is not free - it resolves the renderer, picks the render
- * type and walks the block entity's state. In a base full of chests, signs and hoppers that
- * is a real slice of the frame, spent on detail you cannot make out.</p>
+ * <p>原版只对方块实体做视锥剔除，视锥内的方块实体无论多远都会走一遍渲染派发（解析
+ * renderer、挑选 render type、遍历状态）。在满是箱子、告示牌、漏斗的基地里，这部分开销
+ * 换来的是根本看不清的细节。</p>
  *
- * <p>Purely visual: block entities keep ticking and keep their data, they just stop drawing
- * past the cutoff.</p>
+ * <p><strong>1.21.11 的渲染管线已重构</strong>：{@code BlockEntityRenderDispatcher} 不再有
+ * {@code render(...)} 方法，改为 {@code tryExtractRenderState(...)} 提取渲染状态。旧写法会
+ * 被 {@code require = 0} 静默跳过，导致「配了距离却没效果」。本类因此改注入
+ * {@code tryExtractRenderState} 并返回 {@code null} 表示本帧不渲染——原版在没有对应
+ * renderer 时同样返回 {@code null}，调用方必然处理，因此这是安全的剔除点。</p>
  *
- * <h3>When this helps and when it hurts</h3>
- * <p>This trades CPU for GPU. If your frame rate is limited by the GPU it is a clear win; if
- * it is limited by the CPU the check itself can cost more than the drawing it avoids. v1 did
- * not account for that and lost frames on CPU-bound machines. The check is now a handful of
- * field reads and a squared-distance compare, which keeps it worthwhile - but
- * <strong>if you are CPU-bound, test with this off before assuming it helps</strong>. Set
- * {@code render.block_entity_distance=0} to disable.</p>
- *
- * <p>With the cull off, this mixin is not applied at all: {@code VeloxMixinPlugin} drops it at
- * class-load time, so the default configuration pays nothing here - no injected code, no
- * {@code CallbackInfo}, no enlarged target method.</p>
- *
- * <h3>What 1.0-release changed</h3>
- * <p>Same per-axis early-out as the entity cull: once one axis is beyond the squared budget
- * the sum has to be beyond it as well, so the other two axes are never computed. Most block
- * entities in a loaded base are past the cutoff, so in practice this removes two thirds of
- * the arithmetic for the common case. The decision is unchanged - only the work spent
- * reaching it.</p>
+ * <p>纯视觉优化：方块实体照常 tick、照常保存数据，只是超出距离不绘制。
+ * 把 {@code renderBlockEntityDistance} 设为 0 即关闭，等同原版。</p>
  */
 @Mixin(BlockEntityRenderDispatcher.class)
 public abstract class BlockEntityRenderDispatcherMixin {
 
-    @Inject(
-            method = "render",
-            at = @At("HEAD"),
-            cancellable = true,
-            require = 0
-    )
+    @Inject(method = "tryExtractRenderState", at = @At("HEAD"), cancellable = true, require = 0)
     private void velox$cullByDistance(
             BlockEntity blockEntity,
             float partialTick,
-            PoseStack poseStack,
-            MultiBufferSource bufferSource,
-            CallbackInfo ci
+            ModelFeatureRenderer.CrumblingOverlay overlay,
+            CallbackInfoReturnable<BlockEntityRenderState> cir
     ) {
         if (!VeloxFast.beCullEnabled) {
             return;
         }
 
-        // One int comparison per call; the camera is re-read only on the first call of a frame.
+        // 每次调用只做一次 int 比较：摄像机坐标一帧只在首次读取。
         VeloxFast.tickCamera();
         if (!VeloxFast.isCamValid()) {
             return;
         }
 
-        // BlockPos coordinates are ints; adding 0.5 centres the comparison on the block.
-        net.minecraft.core.BlockPos pos = blockEntity.getBlockPos();
+        // BlockPos 是整数坐标，加 0.5 让比较落在方块中心。
+        BlockPos pos = blockEntity.getBlockPos();
         double limitSq = VeloxFast.beCullDistSq;
 
+        // 逐轴早退：一轴超预算即可判定，省掉其余两轴的运算。
         double dx = VeloxFast.camX() - (pos.getX() + 0.5D);
         double distSq = dx * dx;
         boolean culled = distSq > limitSq;
@@ -87,7 +69,7 @@ public abstract class BlockEntityRenderDispatcherMixin {
 
         if (culled) {
             VeloxRuntime.onBlockEntityCulled();
-            ci.cancel();
+            cir.setReturnValue(null);
         }
     }
 }

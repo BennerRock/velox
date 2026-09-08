@@ -1,9 +1,8 @@
 package com.velox.mixin.client;
 
-import com.mojang.blaze3d.vertex.PoseStack;
 import com.velox.VeloxFast;
 import com.velox.VeloxRuntime;
-import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ExperienceOrb;
@@ -11,65 +10,42 @@ import net.minecraft.world.entity.item.ItemEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Distance culling for entity rendering.
+ * 实体渲染优化：距离剔除 + 每帧渲染数量预算。
  *
- * <p>Like block entities, an entity inside the view frustum is drawn at any distance, and each
- * one costs a model setup and at least one draw call. At 200 blocks an entity covers a couple
- * of pixels, so nearly all of that work is invisible.</p>
+ * <p><strong>1.21.11 的渲染管线已重构</strong>：{@code EntityRenderDispatcher} 不再有
+ * {@code render(...)} 方法，实体是否参与渲染改由
+ * {@code shouldRender(Entity, Frustum, camX, camY, camZ)} 决定。旧版注入 render 的写法在这一
+ * 版本上会被 Mixin 以 {@code require = 0} 静默跳过，表现为「配了剔除距离却完全没有效果」。
+ * 本类因此改为注入 {@code shouldRender}，返回 {@code false} 即剔除，这是 1.21.11 上真正
+ * 生效的实体剔除点。</p>
  *
- * <p>Three independent radii:</p>
+ * <p>三档独立半径：</p>
  * <ul>
- *   <li>{@code render.entity_distance} - everything</li>
- *   <li>{@code render.item_distance} - dropped items only, which usually deserves a much
- *       tighter radius. A farm or a blown-up chest can leave thousands of item entities on the
- *       ground, each a fully lit and rotated model. This is one of the most reliable frame-rate
- *       wins available, because the ratio of draw calls saved to pixels lost is very good.</li>
- *   <li>{@code render.experience_orb_distance} - experience orbs only. Mob farms and the ender
- *       dragon leave hundreds of them behind; they are small, but there are so many that they
- *       are worth their own radius. Orbs keep being collected - only their drawing is skipped.</li>
+ *   <li>实体总距离 {@code renderEntityDistance} - 所有实体；</li>
+ *   <li>掉落物距离 {@code renderItemDistance} - 只管掉落物。农场或炸开的箱子会留下上千个
+ *       物品实体，每一个都是完整光照与旋转的模型，是帧率收益最稳的一项；</li>
+ *   <li>经验球距离 {@code renderExperienceOrbDistance} - 刷怪场与末影龙会留下几百个经验球。</li>
  * </ul>
  *
- * <p>Purely visual. Set every value to {@code 0} for vanilla behaviour - and note that when all
- * of them are {@code 0} this mixin is not applied at all (see {@code VeloxMixinPlugin}), so the
- * cost is not merely skipped, it does not exist.</p>
+ * <p>数量预算：距离合格的实体再按「每帧实体渲染预算」先到先得，预算用尽后跳过其余实体的
+ * 渲染。计数由 {@code VeloxFast.beginFrame()} 每帧重置。</p>
  *
- * <p>The three camera coordinates are already passed into this method, so they are used
- * directly rather than re-read from the camera entity - that removes three field accesses per
- * entity from the hot path.</p>
+ * <p>纯视觉优化，不改变玩法：实体照常被拾取、照常参与游戏逻辑，只是不绘制。
+ * 全部距离设为 0 即等同原版行为。</p>
  *
- * <h3>What 1.0.3 changed</h3>
- * <p>Deciding whether an entity is an item used to go through
- * {@code entity.getClass().getName()} and a {@code String.equals} against a 40-character class
- * name - every entity, every frame. That is the exact category of per-frame string work the
- * mod exists to remove, and it was inside the mod's own hottest loop. The class is now resolved
- * once and the check is a single {@code isInstance}.</p>
- *
- * <p>That first attempt still had a bug worth recording: the class was looked up by <em>name
- * in a string</em>, and Loom rewrites type references when it remaps the jar but leaves string
- * constants alone. So the check worked in the dev environment, where classes carry Mojang
- * names, and failed in every real game, where they carry {@code class_1542} - which silently
- * disabled the item cull entirely. A class literal is remapped with everything else, so that is
- * what this uses now. <strong>Any class or member name this mod needs at runtime has to come
- * from a compiled reference, never from a string.</strong></p>
- *
- * <h3>What 1.0-release changed</h3>
- * <p>The distance test now bails out after the first axis that already exceeds the budget.
- * If {@code dx*dx} is greater than the squared limit then the sum of three non-negative terms
- * must be greater too, so the remaining two multiplies and additions are pure waste - and for
- * the overwhelming majority of entities, which are outside the radius, that is most of the
- * work. The result is bit-for-bit identical to computing the full sum; only the number of
- * operations changes.</p>
+ * <p>物品/经验球的判定用<strong>类字面量</strong>而非字符串类名：Loom 重映射 jar 时会改写
+ * 类型引用，但不会碰字符串常量，按字符串查找在开发环境的 Mojang 名下能work、在正式游戏
+ * 的混淆名下会静默失效。</p>
  */
 @Mixin(EntityRenderDispatcher.class)
 public abstract class EntityRenderDistanceMixin {
 
     /**
-     * A class literal, not a class name: the remapper rewrites this reference along with the
-     * rest of the bytecode, whereas a string would survive unchanged and then fail to resolve
-     * against an obfuscated game. {@code null} only if the class somehow cannot be linked.
+     * 类字面量，不是类名字符串：重映射器会连同字节码一起改写这个引用。
+     * 只有在类无法链接时才为 {@code null}。
      */
     private static final Class<?> ITEM_CLASS = resolveItemClass();
     private static final Class<?> XP_CLASS = resolveXpClass();
@@ -78,8 +54,7 @@ public abstract class EntityRenderDistanceMixin {
         try {
             return ItemEntity.class;
         } catch (Throwable t) {
-            // Class literal could not be linked. Degrade to "never an item" rather than
-            // taking the render loop down.
+            // 类字面量无法链接：退化为「永远不是物品」，而不是拖垮渲染循环。
             return null;
         }
     }
@@ -88,26 +63,24 @@ public abstract class EntityRenderDistanceMixin {
         try {
             return ExperienceOrb.class;
         } catch (Throwable t) {
-            // Same reasoning: an orb is then treated as an ordinary entity, so the only
-            // thing lost is the tighter orb-specific radius.
+            // 同理：经验球退化为普通实体，只是少了更紧的半径。
             return null;
         }
     }
 
-    @Inject(method = "render", at = @At("HEAD"), cancellable = true, require = 0)
+    /**
+     * 决定是否渲染该实体。HEAD 注入：需要剔除时直接返回 false，连原版的视锥计算都省掉。
+     */
+    @Inject(method = "shouldRender", at = @At("HEAD"), cancellable = true, require = 0)
     private void velox$cullEntityByDistance(
             Entity entity,
+            Frustum frustum,
             double camX,
             double camY,
             double camZ,
-            float entityYaw,
-            float partialTick,
-            PoseStack poseStack,
-            MultiBufferSource buffer,
-            int packedLight,
-            CallbackInfo ci
+            CallbackInfoReturnable<Boolean> cir
     ) {
-        // Orb first: it is the narrowest category, and a mob farm is the case that matters.
+        // 经验球优先：它是最窄的一类，刷怪场正是最需要它的场景。
         boolean isXp = VeloxFast.xpCullEnabled && isXpEntity(entity);
         boolean isItem = !isXp && VeloxFast.itemCullEnabled && isItemEntity(entity);
 
@@ -118,8 +91,8 @@ public abstract class EntityRenderDistanceMixin {
             return;
         }
 
-        // Per-axis early-out. A single axis beyond the budget settles the question, so the
-        // remaining axes are only computed when the first one is already inside it.
+        // 逐轴早退：某一轴已超预算即可判定，不必算完三轴。对绝大多数在半径外的实体，
+        // 这就是主要开销所在。结果与完整求和逐位一致，只是运算更少。
         double dx = entity.getX() - camX;
         double distSq = dx * dx;
         boolean culled = distSq > limitSq;
@@ -134,6 +107,11 @@ public abstract class EntityRenderDistanceMixin {
             }
         }
 
+        // 实体优化：距离合格的实体，若本帧渲染预算已满则跳过（先到先得，近处先渲染）。
+        if (!culled && !VeloxFast.tryConsumeEntitySlot()) {
+            culled = true;
+        }
+
         if (culled) {
             if (isXp) {
                 VeloxRuntime.onXpCulled();
@@ -142,23 +120,20 @@ public abstract class EntityRenderDistanceMixin {
             } else {
                 VeloxRuntime.onEntityCulled();
             }
-            ci.cancel();
+            cir.setReturnValue(false);
         }
     }
 
     /**
-     * Whether the entity is a dropped item.
-     *
-     * <p>A single {@code isInstance} against a class literal resolved once at load time. If the
-     * class could not be linked, everything is treated as a normal entity: the general radius
-     * applies, and the only thing lost is the tighter item cull.</p>
+     * 是否为掉落物。对加载期解析好的类字面量做一次 {@code isInstance}。
+     * 若类无法链接，所有实体都按普通实体处理：仍受总距离约束，只是少了更紧的物品半径。
      */
     private static boolean isItemEntity(Entity entity) {
         Class<?> c = ITEM_CLASS;
         return c != null && c.isInstance(entity);
     }
 
-    /** Whether the entity is an experience orb. Same contract as {@link #isItemEntity}. */
+    /** 是否为经验球，契约同 {@link #isItemEntity}。 */
     private static boolean isXpEntity(Entity entity) {
         Class<?> c = XP_CLASS;
         return c != null && c.isInstance(entity);
